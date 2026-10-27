@@ -1,5 +1,9 @@
 const path = require('path');
 const { app, BrowserWindow } = require('electron');
+
+// Ensure Web Audio API and speech synthesis play smoothly in background without user gesture
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 const { initDatabase, closeDb } = require('./database/sqlite-client');
 const { hookManager } = require('./companion/hook-manager');
 const { stateMachine } = require('./companion/state-machine');

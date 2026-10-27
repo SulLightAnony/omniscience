@@ -105,6 +105,13 @@ function registerIpcHandlers(mainWindow, hookManager) {
     }
   });
 
+  // Real-time Companion Save Mode message bridge -> push live to renderer
+  geminiService.setOnCompanionMessage((data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('companion:message-added', data);
+    }
+  });
+
   // ---------------- CONVERSATIONS ----------------
   ipcMain.handle('conversations:list', async () => {
     return getAllConversations();

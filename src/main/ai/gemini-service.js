@@ -41,6 +41,15 @@ function resolveThinkingConfig(level) {
 class GeminiService {
   constructor() {
     this.currentAbortController = null;
+    this.onCompanionMessageCallback = null;
+  }
+
+  /**
+   * Sets callback to notify main window in real-time when Companion saves messages to DB.
+   * @param {(data: { conversationId: string, message: Object, isUser: boolean }) => void} callback
+   */
+  setOnCompanionMessage(callback) {
+    this.onCompanionMessageCallback = callback;
   }
 
   /**
@@ -205,6 +214,14 @@ class GeminiService {
         role: 'user',
         content: text || (images.length > 0 ? '[Companion Staged Screenshot Capture]' : ''),
       });
+
+      if (this.onCompanionMessageCallback && userMsg) {
+        this.onCompanionMessageCallback({
+          conversationId: targetConversationId,
+          message: userMsg,
+          isUser: true,
+        });
+      }
     }
 
     const targetModel = model || getActiveModel() || DEFAULT_MODEL;
@@ -235,20 +252,34 @@ class GeminiService {
 
     // If Save Mode, persist model answer and trigger background summarization
     if (subMode === 'save' && targetConversationId) {
-      addMessage({
-        conversation_id: targetConversationId,
+      let targetConvId = targetConversationId;
+      if (!getConversation(targetConvId)) {
+        const fallback = getMostRecentConversation();
+        targetConvId = fallback ? fallback.id : targetConversationId;
+      }
+
+      const modelMsg = addMessage({
+        conversation_id: targetConvId,
         role: 'model',
         content: answerText,
       });
 
+      if (this.onCompanionMessageCallback && modelMsg) {
+        this.onCompanionMessageCallback({
+          conversationId: targetConvId,
+          message: modelMsg,
+          isUser: false,
+        });
+      }
+
       if (images.length > 0 && userMsg) {
         memoryEngine
-          .extractAndSaveImageContext(keyPool, targetConversationId, userMsg.id, images)
+          .extractAndSaveImageContext(keyPool, targetConvId, userMsg.id, images)
           .catch(() => {});
       }
 
       memoryEngine
-        .triggerRollingSummaryIfNeeded(keyPool, targetConversationId)
+        .triggerRollingSummaryIfNeeded(keyPool, targetConvId)
         .catch(() => {});
     }
 

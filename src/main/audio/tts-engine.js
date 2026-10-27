@@ -1,5 +1,6 @@
 const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 const { getVolumes, getAudioDeviceId } = require('../database/repositories/settings-repo');
+const { earconSynth } = require('./earcon-synth');
 
 const ALL_KEYS_EXHAUSTED_MESSAGE = 'All API keys have reached their rate limit. Please wait a moment.';
 const PRIMARY_VOICE = 'en-US-AndrewNeural';
@@ -69,13 +70,14 @@ class TTSEngine {
     }
 
     const cleanText = text.trim();
-    const stream = client.toStream(cleanText, options);
+    const streamResult = client.toStream(cleanText, options);
+    const audioStream = streamResult && streamResult.audioStream ? streamResult.audioStream : streamResult;
 
     return new Promise((resolve, reject) => {
       const chunks = [];
-      stream.on('data', (chunk) => chunks.push(chunk));
-      stream.on('end', () => resolve(Buffer.concat(chunks)));
-      stream.on('error', (err) => reject(err));
+      audioStream.on('data', (chunk) => chunks.push(chunk));
+      audioStream.on('end', () => resolve(Buffer.concat(chunks)));
+      audioStream.on('error', (err) => reject(err));
     });
   }
 
@@ -92,23 +94,30 @@ class TTSEngine {
 
     try {
       const buffer = await this.synthesizeToBuffer(text);
-      this.lastAnswerBuffer = buffer;
-      this.lastAnswerText = text;
-
-      this.dispatchAudio(buffer, rate);
+      if (buffer && buffer.length > 0) {
+        this.lastAnswerBuffer = buffer;
+        this.lastAnswerText = text;
+        this.dispatchAudio(buffer, rate);
+      }
       return buffer;
-    } catch (_err) {
+    } catch (err) {
+      console.error('Error synthesizing speech in speakAnswer:', err);
       return Buffer.alloc(0);
     }
   }
 
   /**
    * Replays the most recent AI answer from RAM cache.
+   * In Throw Mode (and Save Mode), the last answer is preserved in volatile memory
+   * and only replaced when a new answer is generated.
    * @param {number} [speed=1.0] - 1.0 for normal speed, 0.75 for slow speed
    * @returns {boolean} Whether audio buffer was available and dispatched
    */
   replayLastAnswer(speed = 1.0) {
     if (!this.lastAnswerBuffer || this.lastAnswerBuffer.length === 0) {
+      try {
+        earconSynth.playDoubleLowTut();
+      } catch (_e) {}
       return false;
     }
 

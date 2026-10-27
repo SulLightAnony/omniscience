@@ -61,6 +61,22 @@ class OmniscienceApp {
       });
     }
 
+    // Real-time updates from Companion Save Mode (no refresh needed)
+    if (window.omniscienceAPI && typeof window.omniscienceAPI.onCompanionMessageAdded === 'function') {
+      window.omniscienceAPI.onCompanionMessageAdded(async ({ conversationId, message }) => {
+        if (this.activeConversationId === conversationId) {
+          this.chatView.appendMessage({
+            role: message.role,
+            content: message.content,
+            attachments: message.attachments || [],
+          });
+        } else if (!this.activeConversationId) {
+          await this.selectConversation(conversationId);
+        }
+        await this.loadConversations();
+      });
+    }
+
     await this.loadConversations();
     const recent = await window.omniscienceAPI.getRecentConversation();
     if (recent) {
@@ -82,9 +98,14 @@ class OmniscienceApp {
     }
   }
 
-  ensureAudioContextRunning() {
+  async ensureAudioContextRunning() {
+    if (!this.audioContext) {
+      this.initAudioContext();
+    }
     if (this.audioContext && this.audioContext.state === 'suspended') {
-      this.audioContext.resume();
+      try {
+        await this.audioContext.resume();
+      } catch (_e) {}
     }
   }
 
@@ -232,7 +253,7 @@ class OmniscienceApp {
    */
   async playAudioBuffer(rawBuffer, rate = 1.0, volume = 1.0, sinkId = 'default') {
     if (!rawBuffer) return;
-    this.ensureAudioContextRunning();
+    await this.ensureAudioContextRunning();
 
     try {
       if (!this.audioContext) {

@@ -54,6 +54,11 @@ contextBridge.exposeInMainWorld('omniscienceAPI', {
     ipcRenderer.on('companion:staging-changed', handler);
     return () => ipcRenderer.removeListener('companion:staging-changed', handler);
   },
+  onCompanionMessageAdded: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('companion:message-added', handler);
+    return () => ipcRenderer.removeListener('companion:message-added', handler);
+  },
 
   // Audio Playback Events
   onPlayEarconWav: (callback) => {
