@@ -3,6 +3,7 @@ const { getDb } = require('../sqlite-client');
 const DEFAULT_SETTINGS = {
   api_keys: [],
   active_key_index: 0,
+  active_model: 'gemini-3.8-flash',
   audio_output_device_id: 'default',
   earcon_volume: 0.8,
   tts_volume: 1.0,
@@ -187,6 +188,22 @@ function setVolumes({ earconVolume, ttsVolume }) {
   updateSettings(updates);
 }
 
+/**
+ * Convenience getter for active model identifier.
+ * @returns {string}
+ */
+function getActiveModel() {
+  return String(getSetting('active_model', 'gemini-3.8-flash'));
+}
+
+/**
+ * Convenience setter for active model identifier.
+ * @param {string} model
+ */
+function setActiveModel(model) {
+  setSetting('active_model', String(model || 'gemini-3.8-flash'));
+}
+
 module.exports = {
   DEFAULT_SETTINGS,
   getSetting,
@@ -197,6 +214,8 @@ module.exports = {
   setApiKeys,
   getActiveKeyIndex,
   setActiveKeyIndex,
+  getActiveModel,
+  setActiveModel,
   getAudioDeviceId,
   setAudioDeviceId,
   getVolumes,

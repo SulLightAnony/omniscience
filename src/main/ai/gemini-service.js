@@ -11,8 +11,15 @@ const {
   getMostRecentConversation,
   getConversation,
 } = require('../database/repositories/conversation-repo');
+const { getActiveModel } = require('../database/repositories/settings-repo');
 
-const MODEL_IDENTIFIER = 'gemini-3.8-flash';
+const DEFAULT_MODEL = 'gemini-3.8-flash';
+const SUPPORTED_MODELS = [
+  'gemini-3.8-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.8-live',
+];
 
 /**
  * Maps application reasoning level to Google GenAI thinkingConfig.
@@ -41,6 +48,7 @@ class GeminiService {
    * @param {Array<Buffer>} [params.images=[]]
    * @param {Array<string>} [params.attachmentPaths=[]]
    * @param {'low'|'medium'|'high'} [params.reasoningLevel]
+   * @param {string} [params.model]
    * @returns {Promise<{ messageId: string, content: string }>}
    */
   async sendChatMessage({
@@ -49,6 +57,7 @@ class GeminiService {
     images = [],
     attachmentPaths = [],
     reasoningLevel,
+    model,
   }) {
     if (!conversationId) {
       const conv = getMostRecentConversation();
@@ -57,6 +66,11 @@ class GeminiService {
 
     const conv = getConversation(conversationId);
     const activeReasoning = reasoningLevel || (conv ? conv.reasoning_level : 'low');
+
+    let targetModel = model || getActiveModel() || DEFAULT_MODEL;
+    if (targetModel === 'gemini-3.8-live') {
+      targetModel = 'gemini-3.8-flash'; // Fallback for standard generateContent
+    }
 
     // 1. Record user message in local SQLite database
     const userMsg = addMessage({
@@ -73,43 +87,50 @@ class GeminiService {
       STANDARD_CHAT_SYSTEM_PROMPT
     );
 
-    const thinkingConfig = resolveThinkingConfig(activeReasoning);
+    const config = { systemInstruction };
+    if (targetModel.includes('3.8-flash')) {
+      config.thinkingConfig = resolveThinkingConfig(activeReasoning);
+    }
 
-    // 3. Dispatch to Gemini 3.8 Flash with Key Rotation & Failover
+    // 3. Dispatch to Gemini with Key Rotation & Failover
     const answerText = await keyPool.executeWithRetry(async (apiKey) => {
       const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
-        model: MODEL_IDENTIFIER,
+        model: targetModel,
         contents,
-        config: {
-          systemInstruction,
-          thinkingConfig,
-        },
+        config,
       });
 
       return response && response.text ? response.text : '';
     });
 
-    // 4. Save model response in database
+    // 4. Save model response in database (safeguarded against deleted or stale conversations)
+    let targetConvId = conversationId;
+    const convCheck = getConversation(targetConvId);
+    if (!convCheck) {
+      const fallback = getMostRecentConversation();
+      targetConvId = fallback ? fallback.id : conversationId;
+    }
+
     const modelMsg = addMessage({
-      conversation_id: conversationId,
+      conversation_id: targetConvId,
       role: 'model',
       content: answerText,
     });
 
     // 5. Asynchronously trigger Tier 3 Image Pruning & Tier 1 Rolling Summary
-    if (images.length > 0) {
+    if (images.length > 0 && userMsg) {
       memoryEngine
-        .extractAndSaveImageContext(keyPool, conversationId, userMsg.id, images)
+        .extractAndSaveImageContext(keyPool, targetConvId, userMsg.id, images)
         .catch(() => {});
     }
 
     memoryEngine
-      .triggerRollingSummaryIfNeeded(keyPool, conversationId)
+      .triggerRollingSummaryIfNeeded(keyPool, targetConvId)
       .catch(() => {});
 
     return {
-      messageId: modelMsg.id,
+      messageId: modelMsg ? modelMsg.id : null,
       content: answerText,
     };
   }
@@ -123,6 +144,7 @@ class GeminiService {
    * @param {'save'|'throw'} [params.subMode='save'] - Save to DB vs Volatile RAM
    * @param {'low'|'medium'|'high'} [params.reasoningLevel='low']
    * @param {string} [params.conversationId]
+   * @param {string} [params.model]
    * @returns {Promise<{ content: string, conversationId: string|null }>}
    */
   async processCompanionPayload({
@@ -131,6 +153,7 @@ class GeminiService {
     subMode = 'save',
     reasoningLevel = 'low',
     conversationId = null,
+    model,
   }) {
     let targetConversationId = null;
     let userMsg = null;
@@ -150,6 +173,11 @@ class GeminiService {
       });
     }
 
+    let targetModel = model || getActiveModel() || DEFAULT_MODEL;
+    if (targetModel === 'gemini-3.8-live') {
+      targetModel = 'gemini-3.8-flash';
+    }
+
     // Assemble payload (Throw mode sets targetConversationId to null -> zero memory)
     const { contents, systemInstruction } = memoryEngine.buildContextPayload(
       subMode === 'save' ? targetConversationId : null,
@@ -157,18 +185,18 @@ class GeminiService {
       COMPANION_STEALTH_SYSTEM_PROMPT
     );
 
-    const thinkingConfig = resolveThinkingConfig(reasoningLevel);
+    const config = { systemInstruction };
+    if (targetModel.includes('3.8-flash')) {
+      config.thinkingConfig = resolveThinkingConfig(reasoningLevel);
+    }
 
-    // Call Gemini 3.8 Flash
+    // Call Gemini Model
     const answerText = await keyPool.executeWithRetry(async (apiKey) => {
       const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
-        model: MODEL_IDENTIFIER,
+        model: targetModel,
         contents,
-        config: {
-          systemInstruction,
-          thinkingConfig,
-        },
+        config,
       });
 
       return response && response.text ? response.text : '';
@@ -209,6 +237,7 @@ const geminiService = new GeminiService();
 
 module.exports = {
   geminiService,
-  MODEL_IDENTIFIER,
+  DEFAULT_MODEL,
+  SUPPORTED_MODELS,
   resolveThinkingConfig,
 };

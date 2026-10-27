@@ -112,6 +112,50 @@ class ChatView {
   }
 
   /**
+   * Displays an animated thinking indicator while waiting for AI generation.
+   * @param {string} [label='Gemini is thinking...']
+   */
+  showThinkingIndicator(label = 'Gemini is analyzing...') {
+    this.removeThinkingIndicator();
+
+    const indicatorEl = document.createElement('div');
+    indicatorEl.id = 'active-thinking-indicator';
+    indicatorEl.className = 'message message--model message--thinking';
+
+    const avatarEl = document.createElement('div');
+    avatarEl.className = 'message__avatar';
+    avatarEl.innerHTML = '<svg class="svg-icon svg-icon--sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg>';
+
+    const bubbleEl = document.createElement('div');
+    bubbleEl.className = 'message__bubble';
+
+    const shimmer = document.createElement('div');
+    shimmer.className = 'thinking-shimmer';
+    shimmer.innerHTML = '<span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span>';
+
+    const textSpan = document.createElement('span');
+    textSpan.textContent = label;
+
+    bubbleEl.appendChild(shimmer);
+    bubbleEl.appendChild(textSpan);
+    indicatorEl.appendChild(avatarEl);
+    indicatorEl.appendChild(bubbleEl);
+
+    this.container.appendChild(indicatorEl);
+    this.scrollToBottom();
+  }
+
+  /**
+   * Removes the active thinking indicator if present.
+   */
+  removeThinkingIndicator() {
+    const el = document.getElementById('active-thinking-indicator');
+    if (el) {
+      el.remove();
+    }
+  }
+
+  /**
    * Minimalist, robust Markdown parser for desktop chat.
    * @param {string} text
    * @returns {string} HTML string

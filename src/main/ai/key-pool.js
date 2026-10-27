@@ -176,6 +176,28 @@ class KeyPoolManager {
   }
 
   /**
+   * Checks if an error indicates invalid API key, unauthenticated, or permission denied.
+   * @param {any} error
+   * @returns {boolean}
+   */
+  isKeyAuthError(error) {
+    if (!error) return false;
+    const msg = String(error.message || '').toLowerCase();
+    const status = error.status || (error.response && error.response.status);
+
+    return (
+      status === 400 ||
+      status === 401 ||
+      status === 403 ||
+      msg.includes('api_key_invalid') ||
+      msg.includes('api key not valid') ||
+      msg.includes('invalid_argument') ||
+      msg.includes('unauthenticated') ||
+      msg.includes('permission_denied')
+    );
+  }
+
+  /**
    * Triggers the all-keys-exhausted alert (3x Low Tut + verbal voice announcement).
    */
   async triggerAllKeysExhaustedAlert() {
@@ -213,10 +235,17 @@ class KeyPoolManager {
         lastError = err;
         if (this.isRateLimitError(err)) {
           this.markCooldown(apiKey, COOLDOWN_DURATION_MS);
-          // Loop will immediately try next available key
+          continue;
+        } else if (this.isKeyAuthError(err)) {
+          // Bad/invalid key: cooldown for 24 hours so it won't break the session
+          this.markCooldown(apiKey, 24 * 60 * 60 * 1000);
+          continue;
+        } else if (err.status === 503 || String(err.message || '').includes('503')) {
+          // Temporary Google server spike: 15 second cooldown
+          this.markCooldown(apiKey, 15000);
           continue;
         } else {
-          // If error is not a rate limit (e.g. invalid arguments), rethrow
+          // For client errors (e.g. invalid arguments unrelated to key), rethrow
           throw err;
         }
       }

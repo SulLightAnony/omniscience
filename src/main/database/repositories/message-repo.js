@@ -1,6 +1,10 @@
 const crypto = require('crypto');
 const { getDb } = require('../sqlite-client');
-const { touchConversation } = require('./conversation-repo');
+const {
+  touchConversation,
+  getConversation,
+  getMostRecentConversation,
+} = require('./conversation-repo');
 
 /**
  * Inserts a new message into a conversation thread.
@@ -27,6 +31,14 @@ function addMessage({
   const messageId = id || crypto.randomUUID();
   const timestamp = created_at || Date.now();
 
+  // Validate that conversation exists to prevent FOREIGN KEY constraint failures
+  let targetConversationId = conversation_id;
+  const existing = targetConversationId ? getConversation(targetConversationId) : null;
+  if (!existing) {
+    const fallbackConv = getMostRecentConversation();
+    targetConversationId = fallbackConv.id;
+  }
+
   let attachmentsStr = null;
   if (Array.isArray(attachments_json)) {
     attachmentsStr = JSON.stringify(attachments_json);
@@ -43,7 +55,7 @@ function addMessage({
 
   stmt.run(
     messageId,
-    conversation_id,
+    targetConversationId,
     role,
     content || '',
     attachmentsStr,
@@ -51,7 +63,7 @@ function addMessage({
     timestamp
   );
 
-  touchConversation(conversation_id);
+  touchConversation(targetConversationId);
   return getMessageById(messageId);
 }
 

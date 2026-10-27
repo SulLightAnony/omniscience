@@ -15,9 +15,11 @@ const {
   updateSettings,
   setAudioDeviceId,
   setVolumes,
+  getActiveModel,
+  setActiveModel,
 } = require('./database/repositories/settings-repo');
 const { keyPool } = require('./ai/key-pool');
-const { geminiService } = require('./ai/gemini-service');
+const { geminiService, SUPPORTED_MODELS } = require('./ai/gemini-service');
 const { stateMachine } = require('./companion/state-machine');
 const { stagingBuffer } = require('./companion/staging-buffer');
 const { earconSynth } = require('./audio/earcon-synth');
@@ -133,7 +135,7 @@ function registerIpcHandlers(mainWindow, hookManager) {
     return getMessages(conversationId);
   });
 
-  ipcMain.handle('messages:send', async (_e, { conversationId, text, imagePaths, reasoningLevel }) => {
+  ipcMain.handle('messages:send', async (_e, { conversationId, text, imagePaths, reasoningLevel, model }) => {
     const images = [];
     const paths = Array.isArray(imagePaths) ? imagePaths : [];
 
@@ -153,7 +155,22 @@ function registerIpcHandlers(mainWindow, hookManager) {
       images,
       attachmentPaths: paths,
       reasoningLevel,
+      model,
     });
+  });
+
+  // ---------------- MODELS ----------------
+  ipcMain.handle('models:list', async () => {
+    return SUPPORTED_MODELS;
+  });
+
+  ipcMain.handle('models:getActive', async () => {
+    return getActiveModel();
+  });
+
+  ipcMain.handle('models:setActive', async (_e, model) => {
+    setActiveModel(model);
+    return getActiveModel();
   });
 
   // ---------------- SETTINGS & KEY POOL ----------------

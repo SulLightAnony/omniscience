@@ -22,6 +22,7 @@ class OmniscienceApp {
     this.sendMessageBtn = document.getElementById('send-message-btn');
     this.attachFileBtn = document.getElementById('attach-file-btn');
     this.attachmentsContainer = document.getElementById('composer-attachments');
+    this.modelSelect = document.getElementById('model-select');
 
     // UI Sub-Controllers
     this.chatView = new window.ChatView();
@@ -36,6 +37,13 @@ class OmniscienceApp {
     this.bindEvents();
     this.bindAudioListeners();
     this.bindVoiceRecordingListeners();
+
+    try {
+      const currentModel = await window.omniscienceAPI.getActiveModel();
+      if (this.modelSelect && currentModel) {
+        this.modelSelect.value = currentModel;
+      }
+    } catch (_e) {}
 
     await this.loadConversations();
     const recent = await window.omniscienceAPI.getRecentConversation();
@@ -97,6 +105,13 @@ class OmniscienceApp {
     this.sendMessageBtn.addEventListener('click', () => {
       this.handleSendMessage();
     });
+
+    // Model Selector Change
+    if (this.modelSelect) {
+      this.modelSelect.addEventListener('change', async () => {
+        await window.omniscienceAPI.setActiveModel(this.modelSelect.value);
+      });
+    }
 
     // File Attachment Dialog
     this.attachFileBtn.addEventListener('click', async () => {
@@ -307,26 +322,49 @@ class OmniscienceApp {
       attachments: paths,
     });
 
+    const selectedModel = this.modelSelect ? this.modelSelect.value : 'gemini-3.8-flash';
+    let thinkingLabel = 'Gemini is analyzing...';
+    const targetConversationId = this.activeConversationId;
+
+    if (selectedModel === 'gemini-3.8-flash') {
+      thinkingLabel = 'Gemini 3.8 Flash is reasoning (deep thinking, ~30-90s)...';
+    }
+
+    this.chatView.showThinkingIndicator(thinkingLabel);
+
     try {
       const response = await window.omniscienceAPI.sendMessage({
-        conversationId: this.activeConversationId,
+        conversationId: targetConversationId,
         text,
         imagePaths: paths,
+        model: selectedModel,
       });
 
-      if (response && response.content) {
-        this.chatView.appendMessage({
-          role: 'model',
-          content: response.content,
-        });
+      if (this.activeConversationId === targetConversationId) {
+        this.chatView.removeThinkingIndicator();
+
+        if (response && response.content) {
+          this.chatView.appendMessage({
+            role: 'model',
+            content: response.content,
+          });
+        } else {
+          this.chatView.appendMessage({
+            role: 'model',
+            content: 'No response was returned by the model. Please check your prompt or try another model.',
+          });
+        }
       }
 
       await this.loadConversations();
     } catch (err) {
-      this.chatView.appendMessage({
-        role: 'model',
-        content: `Error: ${err.message || 'Failed to generate response.'}`,
-      });
+      if (this.activeConversationId === targetConversationId) {
+        this.chatView.removeThinkingIndicator();
+        this.chatView.appendMessage({
+          role: 'model',
+          content: `Error: ${err.message || 'Failed to generate response.'}`,
+        });
+      }
     }
   }
 
