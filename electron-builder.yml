@@ -1,0 +1,24 @@
+appId: com.omniscience.agent
+productName: Omniscience
+directories:
+  output: dist
+  buildResources: build
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.ico
+
+nsis:
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+files:
+  - "**/*"
+  - "!dist/*"
+  - "!native-addons/build/*"
