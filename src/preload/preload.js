@@ -12,11 +12,17 @@ contextBridge.exposeInMainWorld('omniscienceAPI', {
   // Messages
   listMessages: (conversationId) => ipcRenderer.invoke('messages:list', conversationId),
   sendMessage: (params) => ipcRenderer.invoke('messages:send', params),
+  stopGeneration: () => ipcRenderer.invoke('messages:stop'),
 
   // Models
   listModels: () => ipcRenderer.invoke('models:list'),
   getActiveModel: () => ipcRenderer.invoke('models:getActive'),
   setActiveModel: (model) => ipcRenderer.invoke('models:setActive', model),
+  onModelChanged: (callback) => {
+    const handler = (_event, model) => callback(model);
+    ipcRenderer.on('model:changed', handler);
+    return () => ipcRenderer.removeListener('model:changed', handler);
+  },
 
   // Settings & API Key Pool
   getSettings: () => ipcRenderer.invoke('settings:get'),

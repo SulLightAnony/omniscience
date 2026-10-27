@@ -233,7 +233,9 @@ class KeyPoolManager {
         return result;
       } catch (err) {
         lastError = err;
-        if (this.isRateLimitError(err)) {
+        if (err.name === 'AbortError' || String(err.message || '').includes('stopped by user')) {
+          throw err;
+        } else if (this.isRateLimitError(err)) {
           this.markCooldown(apiKey, COOLDOWN_DURATION_MS);
           continue;
         } else if (this.isKeyAuthError(err)) {

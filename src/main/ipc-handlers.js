@@ -159,6 +159,17 @@ function registerIpcHandlers(mainWindow, hookManager) {
     });
   });
 
+  ipcMain.handle('messages:stop', async () => {
+    return geminiService.stopActiveGeneration();
+  });
+
+  // Model change from global keyboard shortcut -> push to renderer
+  hookManager.setModelChangeDispatcher((newModel) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('model:changed', newModel);
+    }
+  });
+
   // ---------------- MODELS ----------------
   ipcMain.handle('models:list', async () => {
     return SUPPORTED_MODELS;

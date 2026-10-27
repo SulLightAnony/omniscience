@@ -23,6 +23,13 @@ class OmniscienceApp {
     this.attachFileBtn = document.getElementById('attach-file-btn');
     this.attachmentsContainer = document.getElementById('composer-attachments');
     this.modelSelect = document.getElementById('model-select');
+    this.isGenerating = false;
+
+    // Keybinds Modal Elements
+    this.openKeybindsBtn = document.getElementById('open-keybinds-btn');
+    this.keybindsModal = document.getElementById('keybinds-modal');
+    this.closeKeybindsModalBtn = document.getElementById('close-keybinds-modal-btn');
+    this.closeKeybindsDoneBtn = document.getElementById('close-keybinds-done-btn');
 
     // UI Sub-Controllers
     this.chatView = new window.ChatView();
@@ -44,6 +51,15 @@ class OmniscienceApp {
         this.modelSelect.value = currentModel;
       }
     } catch (_e) {}
+
+    // Synchronize UI dropdown when model is changed via global shortcut (R-CTRL + Arrow Up hold)
+    if (window.omniscienceAPI && typeof window.omniscienceAPI.onModelChanged === 'function') {
+      window.omniscienceAPI.onModelChanged((model) => {
+        if (this.modelSelect && model) {
+          this.modelSelect.value = model;
+        }
+      });
+    }
 
     await this.loadConversations();
     const recent = await window.omniscienceAPI.getRecentConversation();
@@ -89,6 +105,39 @@ class OmniscienceApp {
       await this.createNewConversation();
     });
 
+    // Keybinds Cheat Sheet Modal
+    if (this.openKeybindsBtn) {
+      this.openKeybindsBtn.addEventListener('click', () => {
+        if (this.keybindsModal) this.keybindsModal.classList.remove('is-hidden');
+      });
+    }
+
+    if (this.closeKeybindsModalBtn) {
+      this.closeKeybindsModalBtn.addEventListener('click', () => {
+        if (this.keybindsModal) this.keybindsModal.classList.add('is-hidden');
+      });
+    }
+
+    if (this.closeKeybindsDoneBtn) {
+      this.closeKeybindsDoneBtn.addEventListener('click', () => {
+        if (this.keybindsModal) this.keybindsModal.classList.add('is-hidden');
+      });
+    }
+
+    if (this.keybindsModal) {
+      this.keybindsModal.addEventListener('click', (e) => {
+        if (e.target === this.keybindsModal) {
+          this.keybindsModal.classList.add('is-hidden');
+        }
+      });
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.keybindsModal && !this.keybindsModal.classList.contains('is-hidden')) {
+        this.keybindsModal.classList.add('is-hidden');
+      }
+    });
+
     // Composer Input auto-expand & submit
     this.composerTextarea.addEventListener('input', () => {
       this.composerTextarea.style.height = 'auto';
@@ -98,12 +147,19 @@ class OmniscienceApp {
     this.composerTextarea.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
+        if (this.isGenerating) {
+          return; // Anti-spam: Do not allow sending while generation is in progress
+        }
         this.handleSendMessage();
       }
     });
 
     this.sendMessageBtn.addEventListener('click', () => {
-      this.handleSendMessage();
+      if (this.isGenerating) {
+        this.handleStopGeneration();
+      } else {
+        this.handleSendMessage();
+      }
     });
 
     // Model Selector Change
@@ -299,7 +355,39 @@ class OmniscienceApp {
     });
   }
 
+  setGeneratingState(isGenerating) {
+    this.isGenerating = Boolean(isGenerating);
+
+    if (this.isGenerating) {
+      this.sendMessageBtn.classList.remove('btn--primary');
+      this.sendMessageBtn.classList.add('btn--stop');
+      this.sendMessageBtn.title = 'Stop generating';
+      this.sendMessageBtn.innerHTML = '<svg class="svg-icon" viewBox="0 0 24 24"><rect width="12" height="12" x="6" y="6" rx="2" fill="currentColor"></rect></svg>';
+    } else {
+      this.sendMessageBtn.classList.remove('btn--stop');
+      this.sendMessageBtn.classList.add('btn--primary');
+      this.sendMessageBtn.title = 'Send message (Enter)';
+      this.sendMessageBtn.innerHTML = '<svg class="svg-icon" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>';
+    }
+  }
+
+  async handleStopGeneration() {
+    if (!this.isGenerating) return;
+    try {
+      await window.omniscienceAPI.stopGeneration();
+    } catch (_e) {}
+
+    this.setGeneratingState(false);
+    this.chatView.removeThinkingIndicator();
+    this.chatView.appendMessage({
+      role: 'model',
+      content: 'Generation stopped by user.',
+    });
+  }
+
   async handleSendMessage() {
+    if (this.isGenerating) return;
+
     const text = this.composerTextarea.value.trim();
     const paths = [...this.attachedFilePaths];
 
@@ -328,9 +416,14 @@ class OmniscienceApp {
 
     if (selectedModel === 'gemini-3.8-flash') {
       thinkingLabel = 'Gemini 3.8 Flash is reasoning (deep thinking, ~30-90s)...';
+    } else if (selectedModel === 'gemini-3.6-flash') {
+      thinkingLabel = 'Gemini 3.6 Flash is generating...';
+    } else if (selectedModel === 'gemini-3.5-flash-lite') {
+      thinkingLabel = 'Gemini 3.5 Flash Lite is generating...';
     }
 
     this.chatView.showThinkingIndicator(thinkingLabel);
+    this.setGeneratingState(true);
 
     try {
       const response = await window.omniscienceAPI.sendMessage({
@@ -360,11 +453,21 @@ class OmniscienceApp {
     } catch (err) {
       if (this.activeConversationId === targetConversationId) {
         this.chatView.removeThinkingIndicator();
-        this.chatView.appendMessage({
-          role: 'model',
-          content: `Error: ${err.message || 'Failed to generate response.'}`,
-        });
+        const errMsg = String(err.message || '');
+        if (errMsg.includes('stopped by user')) {
+          this.chatView.appendMessage({
+            role: 'model',
+            content: 'Generation stopped by user.',
+          });
+        } else {
+          this.chatView.appendMessage({
+            role: 'model',
+            content: `Error: ${errMsg || 'Failed to generate response.'}`,
+          });
+        }
       }
+    } finally {
+      this.setGeneratingState(false);
     }
   }
 

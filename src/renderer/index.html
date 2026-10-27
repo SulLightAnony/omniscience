@@ -50,6 +50,10 @@
           </div>
           <span style="font-size: 0.7rem; color: var(--color-text-muted);">Pool</span>
         </div>
+        <button class="btn btn--ghost" id="open-keybinds-btn" style="width: 100%; justify-content: flex-start; margin-bottom: var(--space-1);">
+          <svg class="svg-icon" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"></rect><path d="M6 8h.01"></path><path d="M10 8h.01"></path><path d="M14 8h.01"></path><path d="M18 8h.01"></path><path d="M8 12h.01"></path><path d="M12 12h.01"></path><path d="M16 12h.01"></path><path d="M7 16h10"></path></svg>
+          <span>Shortcuts</span>
+        </button>
         <button class="btn btn--ghost" id="open-settings-btn" style="width: 100%; justify-content: flex-start;">
           <svg class="svg-icon" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
           <span>Settings</span>
@@ -71,7 +75,6 @@
               <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash</option>
               <option value="gemini-3.6-flash">Gemini 3.6 Flash (Fast)</option>
               <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite</option>
-              <option value="gemini-3.8-live">Gemini 3.8 Live</option>
             </select>
           </div>
         </div>
@@ -270,6 +273,182 @@
         <div class="modal__footer">
           <button class="btn btn--primary" id="save-settings-modal-btn">Done</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- KEYBOARD SHORTCUTS MODAL -->
+  <div class="modal-backdrop is-hidden" id="keybinds-modal">
+    <div class="modal modal--wide">
+      <div class="modal__header">
+        <div style="display: flex; align-items: center; gap: var(--space-2);">
+          <svg class="svg-icon" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"></rect><path d="M6 8h.01"></path><path d="M10 8h.01"></path><path d="M14 8h.01"></path><path d="M18 8h.01"></path><path d="M8 12h.01"></path><path d="M12 12h.01"></path><path d="M16 12h.01"></path><path d="M7 16h10"></path></svg>
+          <span class="modal__title">Keyboard Shortcuts & Earcon Reference</span>
+        </div>
+        <button class="btn btn--icon btn--ghost btn--sm" id="close-keybinds-modal-btn">
+          <svg class="svg-icon" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+        </button>
+      </div>
+
+      <div class="modal__body" style="max-height: 70vh; overflow-y: auto;">
+        <!-- GROUP 1: STEALTH COMPANION MODE -->
+        <div class="keybind-group">
+          <div class="keybind-group__title">
+            <svg class="svg-icon svg-icon--sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle><line x1="12" y1="12" x2="18.5" y2="5.5"></line></svg>
+            <span>Stealth Companion Mode (Global Background Controls)</span>
+          </div>
+
+          <div class="keybind-card">
+            <div class="keybind-card__info">
+              <span class="keybind-card__action">Capture Full-Screen Screenshot</span>
+              <span class="keybind-card__desc">Captures top-most screen frame and stages it in volatile RAM buffer.</span>
+              <span class="keybind-card__tut">Earcon: 1x Short Tut (880 Hz)</span>
+            </div>
+            <div class="keybind-card__keys">
+              <span class="kbd">R-CTRL</span> + <span class="kbd">&uarr; Tap</span>
+            </div>
+          </div>
+
+          <div class="keybind-card">
+            <div class="keybind-card__info">
+              <span class="keybind-card__action">Cycle Active Gemini Model</span>
+              <span class="keybind-card__desc">Cycles sequentially: 3.5 Flash Lite &rarr; 3.6 Flash &rarr; 3.8 Flash &rarr; 3.5.</span>
+              <span class="keybind-card__tut">Earcon: 1x Tut (3.5), 2x Tut (3.6), 3x Tut (3.8)</span>
+            </div>
+            <div class="keybind-card__keys">
+              <span class="kbd">R-CTRL</span> + <span class="kbd">&uarr; Hold 400ms</span>
+            </div>
+          </div>
+
+          <div class="keybind-card">
+            <div class="keybind-card__info">
+              <span class="keybind-card__action">Dynamic Blind Region Screenshot</span>
+              <span class="keybind-card__desc">Hold 1s to lock start point, move cursor to opposite corner, release to crop (&ge;30px).</span>
+              <span class="keybind-card__tut">Earcon: 1x Short Tut (start & stop) | 2x Low Tut if &lt;30px</span>
+            </div>
+            <div class="keybind-card__keys">
+              <span class="kbd">L-CTRL</span> + <span class="kbd">L-SHIFT</span> <span style="font-size: 0.72rem; color: var(--color-text-secondary);">(Hold 1s)</span>
+            </div>
+          </div>
+
+          <div class="keybind-card">
+            <div class="keybind-card__info">
+              <span class="keybind-card__action">Push-to-Talk Voice Note & Transcription</span>
+              <span class="keybind-card__desc">Hold both mouse buttons for 1s, speak prompt into mic, release to transcribe. Suppresses right-click menu.</span>
+              <span class="keybind-card__tut">Earcon: 1x Short Tut (start recording) & 1x Short Tut (finish)</span>
+            </div>
+            <div class="keybind-card__keys">
+              <span class="kbd">Left Mouse</span> + <span class="kbd">Right Mouse</span> <span style="font-size: 0.72rem; color: var(--color-text-secondary);">(Hold 1s)</span>
+            </div>
+          </div>
+
+          <div class="keybind-card">
+            <div class="keybind-card__info">
+              <span class="keybind-card__action">Send Staged Screenshots & Voice to AI</span>
+              <span class="keybind-card__desc">Dispatches all staged screenshots and transcribed text to Gemini, reads answer via Neural TTS.</span>
+              <span class="keybind-card__tut">Earcon: 1x Long Tut (350ms, 880 Hz)</span>
+            </div>
+            <div class="keybind-card__keys">
+              <span class="kbd">R-CTRL</span> + <span class="kbd">&rarr;</span>
+            </div>
+          </div>
+
+          <div class="keybind-card">
+            <div class="keybind-card__info">
+              <span class="keybind-card__action">Clear All Staged Captures</span>
+              <span class="keybind-card__desc">Immediately wipes all accumulated screenshot buffers and voice notes from RAM.</span>
+              <span class="keybind-card__tut">Earcon: 2x Low Tut (440 Hz)</span>
+            </div>
+            <div class="keybind-card__keys">
+              <span class="kbd">R-CTRL</span> + <span class="kbd">Delete</span>
+            </div>
+          </div>
+
+          <div class="keybind-card">
+            <div class="keybind-card__info">
+              <span class="keybind-card__action">Replay Last Spoken AI Answer</span>
+              <span class="keybind-card__desc">Replays cached neural speech. Tap for Normal 1.0x speed, or hold for Slow 0.75x speed.</span>
+              <span class="keybind-card__tut">Audio: Spoken TTS playback through chosen sink</span>
+            </div>
+            <div class="keybind-card__keys">
+              <span class="kbd">R-CTRL</span> + <span class="kbd">&larr;</span> <span style="font-size: 0.72rem; color: var(--color-text-secondary);">(Tap: 1.0x / Hold: 0.75x)</span>
+            </div>
+          </div>
+
+          <div class="keybind-card">
+            <div class="keybind-card__info">
+              <span class="keybind-card__action">Cycle Reasoning Depth Level</span>
+              <span class="keybind-card__desc">Cycles thinking level sequentially: Low &rarr; Medium &rarr; High &rarr; Low.</span>
+              <span class="keybind-card__tut">Earcon: 1x Tut (Low), 2x Tut (Med), 3x Tut (High)</span>
+            </div>
+            <div class="keybind-card__keys">
+              <span class="kbd">R-CTRL</span> + <span class="kbd">&darr; Tap</span>
+            </div>
+          </div>
+
+          <div class="keybind-card">
+            <div class="keybind-card__info">
+              <span class="keybind-card__action">Toggle Companion Sub-Mode (Save vs Throw)</span>
+              <span class="keybind-card__desc">Switches between Save Mode (persists into chat) and Throw Mode (stateless volatile RAM).</span>
+              <span class="keybind-card__tut">Earcon: 1x Long Tut (Save) | 2x Long Tut (Throw)</span>
+            </div>
+            <div class="keybind-card__keys">
+              <span class="kbd">R-CTRL</span> + <span class="kbd">&darr; Hold 1s</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- GROUP 2: MAIN DESKTOP WORKSPACE -->
+        <div class="keybind-group">
+          <div class="keybind-group__title">
+            <svg class="svg-icon svg-icon--sm" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M3 9h18"></path></svg>
+            <span>Main Desktop Workspace Controls</span>
+          </div>
+
+          <div class="keybind-card">
+            <div class="keybind-card__info">
+              <span class="keybind-card__action">Send Message</span>
+              <span class="keybind-card__desc">Submits current prompt and attachments to the selected Gemini model.</span>
+            </div>
+            <div class="keybind-card__keys">
+              <span class="kbd">Enter</span>
+            </div>
+          </div>
+
+          <div class="keybind-card">
+            <div class="keybind-card__info">
+              <span class="keybind-card__action">New Line in Composer</span>
+              <span class="keybind-card__desc">Inserts a newline without submitting the message.</span>
+            </div>
+            <div class="keybind-card__keys">
+              <span class="kbd">Shift</span> + <span class="kbd">Enter</span>
+            </div>
+          </div>
+
+          <div class="keybind-card">
+            <div class="keybind-card__info">
+              <span class="keybind-card__action">Paste Image / Screenshot from Clipboard</span>
+              <span class="keybind-card__desc">Directly attaches copied screenshot or image files to the composer.</span>
+            </div>
+            <div class="keybind-card__keys">
+              <span class="kbd">Ctrl</span> + <span class="kbd">V</span>
+            </div>
+          </div>
+
+          <div class="keybind-card">
+            <div class="keybind-card__info">
+              <span class="keybind-card__action">Stop Response Generation</span>
+              <span class="keybind-card__desc">Aborts in-flight generation when the model is reasoning or responding.</span>
+            </div>
+            <div class="keybind-card__keys">
+              <span class="kbd">Stop Button (Red)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal__footer">
+        <button class="btn btn--primary" id="close-keybinds-done-btn">Got It</button>
       </div>
     </div>
   </div>

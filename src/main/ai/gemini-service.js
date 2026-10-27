@@ -18,7 +18,6 @@ const SUPPORTED_MODELS = [
   'gemini-3.8-flash',
   'gemini-3.6-flash',
   'gemini-3.5-flash-lite',
-  'gemini-3.8-live',
 ];
 
 /**
@@ -40,6 +39,23 @@ function resolveThinkingConfig(level) {
 }
 
 class GeminiService {
+  constructor() {
+    this.currentAbortController = null;
+  }
+
+  /**
+   * Aborts any currently running generateContent request.
+   * @returns {boolean} Whether an active generation was aborted
+   */
+  stopActiveGeneration() {
+    if (this.currentAbortController) {
+      this.currentAbortController.abort();
+      this.currentAbortController = null;
+      return true;
+    }
+    return false;
+  }
+
   /**
    * Processes a user chat message in Main Visible Workspace Mode.
    * @param {Object} params
@@ -67,10 +83,7 @@ class GeminiService {
     const conv = getConversation(conversationId);
     const activeReasoning = reasoningLevel || (conv ? conv.reasoning_level : 'low');
 
-    let targetModel = model || getActiveModel() || DEFAULT_MODEL;
-    if (targetModel === 'gemini-3.8-live') {
-      targetModel = 'gemini-3.8-flash'; // Fallback for standard generateContent
-    }
+    const targetModel = model || getActiveModel() || DEFAULT_MODEL;
 
     // 1. Record user message in local SQLite database
     const userMsg = addMessage({
@@ -92,17 +105,33 @@ class GeminiService {
       config.thinkingConfig = resolveThinkingConfig(activeReasoning);
     }
 
-    // 3. Dispatch to Gemini with Key Rotation & Failover
-    const answerText = await keyPool.executeWithRetry(async (apiKey) => {
-      const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({
-        model: targetModel,
-        contents,
-        config,
+    const controller = new AbortController();
+    this.currentAbortController = controller;
+
+    try {
+      // 3. Dispatch to Gemini with Key Rotation & Failover
+      const answerText = await keyPool.executeWithRetry(async (apiKey) => {
+        if (controller.signal.aborted) {
+          throw new Error('Generation stopped by user.');
+        }
+
+        const ai = new GoogleGenAI({ apiKey });
+        const response = await ai.models.generateContent({
+          model: targetModel,
+          contents,
+          config,
+        });
+
+        if (controller.signal.aborted) {
+          throw new Error('Generation stopped by user.');
+        }
+
+        return response && response.text ? response.text : '';
       });
 
-      return response && response.text ? response.text : '';
-    });
+      if (controller.signal.aborted) {
+        throw new Error('Generation stopped by user.');
+      }
 
     // 4. Save model response in database (safeguarded against deleted or stale conversations)
     let targetConvId = conversationId;
@@ -129,10 +158,15 @@ class GeminiService {
       .triggerRollingSummaryIfNeeded(keyPool, targetConvId)
       .catch(() => {});
 
-    return {
-      messageId: modelMsg ? modelMsg.id : null,
-      content: answerText,
-    };
+      return {
+        messageId: modelMsg ? modelMsg.id : null,
+        content: answerText,
+      };
+    } finally {
+      if (this.currentAbortController === controller) {
+        this.currentAbortController = null;
+      }
+    }
   }
 
   /**
@@ -173,10 +207,7 @@ class GeminiService {
       });
     }
 
-    let targetModel = model || getActiveModel() || DEFAULT_MODEL;
-    if (targetModel === 'gemini-3.8-live') {
-      targetModel = 'gemini-3.8-flash';
-    }
+    const targetModel = model || getActiveModel() || DEFAULT_MODEL;
 
     // Assemble payload (Throw mode sets targetConversationId to null -> zero memory)
     const { contents, systemInstruction } = memoryEngine.buildContextPayload(

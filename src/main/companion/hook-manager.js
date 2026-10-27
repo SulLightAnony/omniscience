@@ -7,6 +7,7 @@ const { earconSynth } = require('../audio/earcon-synth');
 const { ttsEngine } = require('../audio/tts-engine');
 const { geminiService } = require('../ai/gemini-service');
 const { transcribeAudio } = require('../ai/stt-service');
+const { getActiveModel, setActiveModel } = require('../database/repositories/settings-repo');
 
 // Load native Win32 low-level mouse hook addon
 let mouseSuppressor = null;
@@ -30,6 +31,7 @@ class HookManager {
   constructor() {
     this.isListening = false;
     this.audioRecordingHandler = null; // Callback: (action: 'start'|'stop') => Promise<Buffer>
+    this.modelChangeDispatcher = null; // Callback: (newModel: string) => void
 
     // Keyboard state
     this.keysDown = new Set();
@@ -43,10 +45,49 @@ class HookManager {
     this.voiceHoldTimer = null;
     this.isVoiceRecording = false;
 
+    this.arrowUpPressTime = 0;
+    this.arrowUpHoldTimer = null;
+    this.arrowUpHoldTriggered = false;
+
     this.arrowLeftPressTime = 0;
     this.arrowDownPressTime = 0;
     this.arrowDownHoldTimer = null;
     this.arrowDownHoldTriggered = false;
+  }
+
+  /**
+   * Sets callback to notify UI when active model changes via global shortcut.
+   * @param {(newModel: string) => void} dispatcher
+   */
+  setModelChangeDispatcher(dispatcher) {
+    this.modelChangeDispatcher = dispatcher;
+  }
+
+  /**
+   * Cycles active model: 3.5 -> 3.6 -> 3.8 -> 3.5
+   * Plays corresponding earcon: 1x tut for 3.5, 2x tut for 3.6, 3x tut for 3.8
+   */
+  cycleActiveModel() {
+    const ORDER = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.8-flash'];
+    const current = getActiveModel() || 'gemini-3.8-flash';
+    const currentIndex = ORDER.indexOf(current);
+    const nextIndex = (currentIndex + 1) % ORDER.length;
+    const nextModel = ORDER[nextIndex];
+
+    setActiveModel(nextModel);
+
+    // Auditory feedback: 1x tut for 3.5, 2x tut for 3.6, 3x tut for 3.8
+    if (nextModel === 'gemini-3.5-flash-lite') {
+      earconSynth.playShortTut();
+    } else if (nextModel === 'gemini-3.6-flash') {
+      earconSynth.playDoubleShortTut();
+    } else if (nextModel === 'gemini-3.8-flash') {
+      earconSynth.playTripleShortTut();
+    }
+
+    if (this.modelChangeDispatcher) {
+      this.modelChangeDispatcher(nextModel);
+    }
   }
 
   /**
@@ -117,10 +158,18 @@ class HookManager {
     const isLCtrl = this.keysDown.has(UiohookKey.Ctrl);
     const isLShift = this.keysDown.has(UiohookKey.Shift);
 
-    // 1. Full Screen Capture: R-CTRL + Arrow Up
-    if (isRCtrl && key === UiohookKey.ArrowUp) {
+    // 1. Full Screen Capture OR Model Cycle Hold: R-CTRL + Arrow Up
+    if (isRCtrl && (key === UiohookKey.ArrowUp || key === UiohookKey.NumpadArrowUp)) {
       if (stateMachine.getState() !== 'BUSY') {
-        screenCapture.captureFullScreen();
+        this.arrowUpPressTime = Date.now();
+        this.arrowUpHoldTriggered = false;
+
+        // Arm 400ms hold timer to cycle active model
+        if (this.arrowUpHoldTimer) clearTimeout(this.arrowUpHoldTimer);
+        this.arrowUpHoldTimer = setTimeout(() => {
+          this.arrowUpHoldTriggered = true;
+          this.cycleActiveModel();
+        }, 400);
       }
       return;
     }
@@ -179,6 +228,26 @@ class HookManager {
   handleKeyUp(e) {
     const key = e.keycode;
     this.keysDown.delete(key);
+
+    // Full Screen Capture on Arrow Up release (if tapped < 400ms without hold)
+    if (key === UiohookKey.ArrowUp || key === UiohookKey.NumpadArrowUp) {
+      if (this.arrowUpHoldTimer) {
+        clearTimeout(this.arrowUpHoldTimer);
+        this.arrowUpHoldTimer = null;
+      }
+
+      if (this.arrowUpPressTime > 0) {
+        const duration = Date.now() - this.arrowUpPressTime;
+        this.arrowUpPressTime = 0;
+
+        if (!this.arrowUpHoldTriggered && duration < 400) {
+          if (stateMachine.getState() !== 'BUSY') {
+            screenCapture.captureFullScreen();
+          }
+        }
+      }
+      this.arrowUpHoldTriggered = false;
+    }
 
     // Cancel dynamic region hold timer if either L-CTRL or L-SHIFT released
     if (key === UiohookKey.Ctrl || key === UiohookKey.Shift) {
