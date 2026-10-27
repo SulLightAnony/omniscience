@@ -70,7 +70,7 @@ class OmniscienceApp {
             content: message.content,
             attachments: message.attachments || [],
           });
-        } else if (!this.activeConversationId) {
+        } else {
           await this.selectConversation(conversationId);
         }
         await this.loadConversations();
@@ -235,29 +235,37 @@ class OmniscienceApp {
   bindAudioListeners() {
     // Play synthesized earcon WAV
     window.omniscienceAPI.onPlayEarconWav(async ({ buffer, sinkId }) => {
-      await this.playAudioBuffer(buffer, 1.0, 1.0, sinkId);
+      await this.playAudioBuffer(buffer, 1.0, 1.0, sinkId, true);
     });
 
-    // Play synthesized TTS MP3 audio
-    window.omniscienceAPI.onPlayTTSBuffer(async ({ buffer, playbackRate, volume, sinkId }) => {
-      await this.playAudioBuffer(buffer, playbackRate || 1.0, volume || 1.0, sinkId);
+    // Play synthesized TTS MP3 audio with seamless chunk scheduling
+    window.omniscienceAPI.onPlayTTSBuffer(async ({ buffer, playbackRate, volume, sinkId, isFirstChunk }) => {
+      await this.playAudioBuffer(buffer, playbackRate || 1.0, volume || 1.0, sinkId, isFirstChunk !== false);
     });
   }
 
   /**
    * Decodes and plays an audio buffer using Web Audio API and routes to selected sinkId.
+   * Supports seamless chunk scheduling with zero-gap transitions between sentences.
    * @param {Uint8Array|ArrayBuffer} rawBuffer
    * @param {number} rate
    * @param {number} volume
    * @param {string} sinkId
+   * @param {boolean} [isFirstChunk=true]
    */
-  async playAudioBuffer(rawBuffer, rate = 1.0, volume = 1.0, sinkId = 'default') {
+  async playAudioBuffer(rawBuffer, rate = 1.0, volume = 1.0, sinkId = 'default', isFirstChunk = true) {
     if (!rawBuffer) return;
     await this.ensureAudioContextRunning();
 
     try {
       if (!this.audioContext) {
         this.initAudioContext();
+      }
+
+      // If isFirstChunk, terminate previous speech sources and reset timeline
+      if (isFirstChunk) {
+        this.stopActiveAudioSources();
+        this.nextAudioStartTime = this.audioContext.currentTime;
       }
 
       // Route AudioContext to specific hardware sink if supported
@@ -284,10 +292,44 @@ class OmniscienceApp {
       source.connect(gainNode);
       gainNode.connect(this.audioContext.destination);
 
-      source.start(0);
+      const effectiveRate = rate > 0 ? rate : 1.0;
+      const duration = audioBuffer.duration / effectiveRate;
+      const startTime = Math.max(this.audioContext.currentTime, this.nextAudioStartTime || 0);
+
+      source.start(startTime);
+      this.nextAudioStartTime = startTime + duration;
+
+      if (!this.activeAudioSources) {
+        this.activeAudioSources = [];
+      }
+      this.activeAudioSources.push(source);
+
+      source.onended = () => {
+        if (this.activeAudioSources) {
+          const idx = this.activeAudioSources.indexOf(source);
+          if (idx !== -1) {
+            this.activeAudioSources.splice(idx, 1);
+          }
+        }
+      };
     } catch (_err) {
       // Audio playback errors handled gracefully
     }
+  }
+
+  /**
+   * Stops all currently playing speech audio sources and resets the timeline.
+   */
+  stopActiveAudioSources() {
+    if (this.activeAudioSources && this.activeAudioSources.length > 0) {
+      for (const src of this.activeAudioSources) {
+        try {
+          src.stop();
+        } catch (_e) {}
+      }
+      this.activeAudioSources = [];
+    }
+    this.nextAudioStartTime = 0;
   }
 
   /**

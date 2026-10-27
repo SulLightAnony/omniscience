@@ -1,3 +1,6 @@
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 const { GoogleGenAI } = require('@google/genai');
 const { keyPool } = require('./key-pool');
 const { memoryEngine } = require('./memory-engine');
@@ -8,10 +11,13 @@ const {
 } = require('./prompts');
 const { addMessage } = require('../database/repositories/message-repo');
 const {
+  getAllConversations,
   getMostRecentConversation,
   getConversation,
+  createConversation,
 } = require('../database/repositories/conversation-repo');
 const { getActiveModel } = require('../database/repositories/settings-repo');
+const { getCapturesDirectory } = require('../database/sqlite-client');
 
 const DEFAULT_MODEL = 'gemini-3.8-flash';
 const SUPPORTED_MODELS = [
@@ -200,19 +206,44 @@ class GeminiService {
   }) {
     let targetConversationId = null;
     let userMsg = null;
+    const savedAttachmentPaths = [];
 
     if (subMode === 'save') {
       targetConversationId = conversationId;
       if (!targetConversationId) {
         const recent = getMostRecentConversation();
-        targetConversationId = recent.id;
+        targetConversationId = recent ? recent.id : null;
+      }
+      if (!targetConversationId) {
+        const newConv = createConversation({ title: 'Companion Session' });
+        targetConversationId = newConv.id;
       }
 
-      // Persist user action in Save Mode
+      // Persist screenshot buffers to disk in the captures folder
+      if (images && images.length > 0) {
+        const capturesDir = getCapturesDirectory();
+        for (let i = 0; i < images.length; i++) {
+          const imgBuffer = images[i];
+          if (Buffer.isBuffer(imgBuffer) && imgBuffer.length > 0) {
+            const fileName = `capture_${Date.now()}_${i}_${crypto.randomBytes(4).toString('hex')}.jpg`;
+            const filePath = path.join(capturesDir, fileName);
+            try {
+              fs.writeFileSync(filePath, imgBuffer);
+              savedAttachmentPaths.push(filePath);
+            } catch (err) {
+              console.error('Failed to save companion screenshot to disk:', err);
+            }
+          }
+        }
+      }
+
+      // Persist user action in Save Mode with attachments and speech-to-text
+      const userContent = text ? text.trim() : (savedAttachmentPaths.length > 0 ? '' : '');
       userMsg = addMessage({
         conversation_id: targetConversationId,
         role: 'user',
-        content: text || (images.length > 0 ? '[Companion Staged Screenshot Capture]' : ''),
+        content: userContent,
+        attachments_json: savedAttachmentPaths.length > 0 ? savedAttachmentPaths : null,
       });
 
       if (this.onCompanionMessageCallback && userMsg) {
@@ -250,7 +281,15 @@ class GeminiService {
       return response && response.text ? response.text : '';
     });
 
-    // If Save Mode, persist model answer and trigger background summarization
+    // START TTS SYNTHESIS IMMEDIATELY IN PARALLEL! Do NOT wait for SQLite writes or UI!
+    let ttsPromise = Promise.resolve();
+    if (answerText) {
+      ttsPromise = ttsEngine.speakAnswer(answerText).catch((err) => {
+        console.error('Error during companion speakAnswer:', err);
+      });
+    }
+
+    // If Save Mode, persist model answer and trigger background summarization concurrently
     if (subMode === 'save' && targetConversationId) {
       let targetConvId = targetConversationId;
       if (!getConversation(targetConvId)) {
@@ -283,10 +322,7 @@ class GeminiService {
         .catch(() => {});
     }
 
-    // Synthesize neural speech and speak answer directly through configured audio sink
-    if (answerText) {
-      ttsEngine.speakAnswer(answerText).catch(() => {});
-    }
+    await ttsPromise;
 
     return {
       content: answerText,

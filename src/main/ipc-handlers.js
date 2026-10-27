@@ -44,13 +44,14 @@ function registerIpcHandlers(mainWindow, hookManager) {
   });
 
   // Bind TTS neural speech dispatcher to Renderer Web Audio API
-  ttsEngine.setDispatcher((audioBuffer, playbackRate, volume, sinkId) => {
+  ttsEngine.setDispatcher((audioBuffer, playbackRate, volume, sinkId, isFirstChunk = true) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('audio:play-tts-buffer', {
         buffer: audioBuffer,
         playbackRate,
         volume,
         sinkId,
+        isFirstChunk,
       });
     }
   });

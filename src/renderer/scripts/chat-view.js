@@ -79,9 +79,13 @@ class ChatView {
       attachmentsContainer.className = 'message__attachments';
 
       msg.attachments.forEach((filePath) => {
+        if (!filePath) return;
         const img = document.createElement('img');
         img.className = 'message__attachment-img';
-        img.src = `file://${filePath}`;
+        const normalized = String(filePath).replace(/\\/g, '/');
+        img.src = normalized.startsWith('file://')
+          ? normalized
+          : `file:///${normalized.replace(/^\/+/, '')}`;
         img.alt = 'Attached screenshot';
         img.loading = 'lazy';
         attachmentsContainer.appendChild(img);
@@ -91,17 +95,19 @@ class ChatView {
     }
 
     // Message Content
-    const contentEl = document.createElement('div');
-    contentEl.className = 'message__content';
+    if (msg.content && msg.content.trim()) {
+      const contentEl = document.createElement('div');
+      contentEl.className = 'message__content';
 
-    if (isUser) {
-      contentEl.textContent = msg.content || '';
-    } else {
-      contentEl.innerHTML = this.parseMarkdown(msg.content || '');
-      this.enhanceCodeAndMath(contentEl);
+      if (isUser) {
+        contentEl.textContent = msg.content;
+      } else {
+        contentEl.innerHTML = this.parseMarkdown(msg.content);
+        this.enhanceCodeAndMath(contentEl);
+      }
+
+      bubbleEl.appendChild(contentEl);
     }
-
-    bubbleEl.appendChild(contentEl);
     messageEl.appendChild(avatarEl);
     messageEl.appendChild(bubbleEl);
     this.container.appendChild(messageEl);

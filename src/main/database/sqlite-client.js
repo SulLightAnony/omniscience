@@ -107,9 +107,23 @@ function closeDb() {
   }
 }
 
+/**
+ * Resolves and ensures the storage directory for companion screenshot captures.
+ * @returns {string} Directory path for captured images
+ */
+function getCapturesDirectory() {
+  const baseDir = resolveDbDirectory();
+  const capturesDir = path.join(baseDir, 'captures');
+  if (!fs.existsSync(capturesDir)) {
+    fs.mkdirSync(capturesDir, { recursive: true });
+  }
+  return capturesDir;
+}
+
 module.exports = {
   initDatabase,
   getDb,
   closeDb,
   resolveDbDirectory,
+  getCapturesDirectory,
 };

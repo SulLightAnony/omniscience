@@ -6,9 +6,101 @@ const ALL_KEYS_EXHAUSTED_MESSAGE = 'All API keys have reached their rate limit. 
 const PRIMARY_VOICE = 'en-US-AndrewNeural';
 const FALLBACK_VOICE = 'en-US-AvaNeural';
 
+/**
+ * Sanitizes plain text for smooth, natural Text-to-Speech synthesis.
+ * Strips markdown formatting, code fences, citations, and converts math symbols to verbal words.
+ * @param {string} text
+ * @returns {string}
+ */
+function cleanTextForTTS(text) {
+  if (!text || typeof text !== 'string') return '';
+  return text
+    // Markdown formatting: bold and italic markers
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    // Markdown headers
+    .replace(/^#{1,6}\s+/gm, '')
+    // Code blocks & inline code
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    // Markdown links [text](url) -> text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    // Raw URLs and citation brackets [1], [2]
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/\[\d+\]/g, '')
+    // LaTeX formulas and math blocks
+    .replace(/\$\$([\s\S]*?)\$\$/g, '$1')
+    .replace(/\$([^$]+)\$/g, '$1')
+    // Leading list/bullet markers
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    // Common math symbols to spoken English equivalents
+    .replace(/\s*\+\s*/g, ' plus ')
+    .replace(/\s*=\s*/g, ' equals ')
+    .replace(/\s*%\s*/g, ' percent ')
+    .replace(/√/g, ' square root of ')
+    // Blockquotes
+    .replace(/^>\s+/gm, '')
+    // Stray formatting characters
+    .replace(/[~#^_{}\\<>|]/g, ' ')
+    // Collapse multiple whitespace
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Splits cleaned text into sentences based on punctuation.
+ * @param {string} text
+ * @returns {Array<string>}
+ */
+function splitSentences(text) {
+  if (!text) return [];
+  const rawMatches = text.match(/[^.!?\n]+(?:[.!?]+|$)/g) || [text];
+  const results = [];
+  for (const m of rawMatches) {
+    const trimmed = m.trim();
+    if (trimmed.length > 0) {
+      results.push(trimmed);
+    }
+  }
+  return results;
+}
+
+/**
+ * Groups sentences into synthesis chunks.
+ * Sentence 0 is always standalone so narrator begins speaking in under 300ms.
+ * Remaining sentences are grouped into manageable chunks (~120 chars).
+ * @param {Array<string>} sentences
+ * @returns {Array<string>}
+ */
+function groupSentences(sentences) {
+  if (!sentences || sentences.length <= 1) return sentences;
+  const groups = [sentences[0]];
+
+  let currentGroup = '';
+  for (let i = 1; i < sentences.length; i++) {
+    const s = sentences[i];
+    if (!currentGroup) {
+      currentGroup = s;
+    } else if (currentGroup.length + s.length < 120) {
+      currentGroup += ` ${s}`;
+    } else {
+      groups.push(currentGroup);
+      currentGroup = s;
+    }
+  }
+  if (currentGroup) {
+    groups.push(currentGroup);
+  }
+
+  return groups;
+}
+
 class TTSEngine {
   constructor() {
-    this.ttsClient = null;
+    this.clientPool = [];
     this.activeVoice = PRIMARY_VOICE;
     this.lastAnswerBuffer = null;
     this.lastAnswerText = '';
@@ -19,59 +111,63 @@ class TTSEngine {
 
   /**
    * Sets the playback dispatcher callback (bridged to Electron IPC).
-   * @param {Function} dispatcher - (audioBuffer: Buffer, playbackRate: number, volume: number, sinkId: string) => void
+   * @param {Function} dispatcher - (audioBuffer: Buffer, playbackRate: number, volume: number, sinkId: string, isFirstChunk: boolean) => void
    */
   setDispatcher(dispatcher) {
     this.playbackDispatcher = dispatcher;
   }
 
   /**
-   * Initializes the msedge-tts client with selected voice.
+   * Initializes or returns the pre-warmed pool of MsEdgeTTS clients.
+   * @returns {Promise<Array<MsEdgeTTS>>}
    */
-  async initClient() {
-    if (this.ttsClient) return this.ttsClient;
+  async initPool() {
+    if (this.clientPool.length >= 2) {
+      return this.clientPool;
+    }
+
     try {
-      this.ttsClient = new MsEdgeTTS();
-      await this.ttsClient.setMetadata(
-        this.activeVoice,
-        OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
+      const pool = [new MsEdgeTTS(), new MsEdgeTTS()];
+      await Promise.all(
+        pool.map((c) =>
+          c.setMetadata(this.activeVoice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3)
+        )
       );
+      this.clientPool = pool;
     } catch (_err) {
-      // Fallback voice if primary voice fails
+      // Fallback voice if primary voice metadata fails
       try {
         this.activeVoice = FALLBACK_VOICE;
-        this.ttsClient = new MsEdgeTTS();
-        await this.ttsClient.setMetadata(
-          this.activeVoice,
-          OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
+        const fallbackPool = [new MsEdgeTTS(), new MsEdgeTTS()];
+        await Promise.all(
+          fallbackPool.map((c) =>
+            c.setMetadata(this.activeVoice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3)
+          )
         );
+        this.clientPool = fallbackPool;
       } catch (_err2) {
-        // Handled per request
+        // Ignored
       }
     }
-    return this.ttsClient;
+
+    return this.clientPool;
   }
 
   /**
-   * Synthesizes plain English text into an in-memory MP3 Buffer.
+   * Synthesizes a single chunk of text using a specific MsEdgeTTS client.
+   * @param {MsEdgeTTS} client
    * @param {string} text
    * @param {Object} [options]
-   * @param {string} [options.rate] - e.g., '+0%', '-25%'
    * @returns {Promise<Buffer>}
    */
-  async synthesizeToBuffer(text, options = {}) {
+  async synthesizeChunk(client, text, options = {}) {
     if (!text || !text.trim()) {
       return Buffer.alloc(0);
     }
 
-    const client = await this.initClient();
-    if (!client) {
-      throw new Error('TTS client failed to initialize');
-    }
-
-    const cleanText = text.trim();
-    const streamResult = client.toStream(cleanText, options);
-    const audioStream = streamResult && streamResult.audioStream ? streamResult.audioStream : streamResult;
+    const streamResult = client.toStream(text.trim(), options);
+    const audioStream =
+      streamResult && streamResult.audioStream ? streamResult.audioStream : streamResult;
 
     return new Promise((resolve, reject) => {
       const chunks = [];
@@ -82,24 +178,71 @@ class TTSEngine {
   }
 
   /**
-   * Speaks the AI response text, caches the audio buffer in RAM, and dispatches playback.
+   * Speaks the AI response text with ultra-low latency.
+   * Chunks into sentences, starts playback of the first sentence immediately (< 300ms),
+   * synthesizes remaining chunks concurrently, and caches full audio for replay.
    * @param {string} text
    * @param {number} [rate=1.0]
    * @returns {Promise<Buffer>}
    */
   async speakAnswer(text, rate = 1.0) {
-    if (!text || !text.trim()) {
+    const cleanText = cleanTextForTTS(text);
+    if (!cleanText) {
       return Buffer.alloc(0);
     }
 
+    this.lastAnswerText = cleanText;
+
     try {
-      const buffer = await this.synthesizeToBuffer(text);
-      if (buffer && buffer.length > 0) {
-        this.lastAnswerBuffer = buffer;
-        this.lastAnswerText = text;
-        this.dispatchAudio(buffer, rate);
+      const pool = await this.initPool();
+      const client0 = pool[0] || new MsEdgeTTS();
+      const sentences = splitSentences(cleanText);
+      const groups = groupSentences(sentences);
+
+      // Single short sentence: synthesize in one shot
+      if (groups.length <= 1) {
+        const buffer = await this.synthesizeChunk(client0, cleanText);
+        if (buffer && buffer.length > 0) {
+          this.lastAnswerBuffer = buffer;
+          this.dispatchAudio(buffer, rate, true);
+        }
+        return buffer;
       }
-      return buffer;
+
+      // Multi-sentence answer: synthesize Chunk 0 first and stream immediately
+      const client1 = pool[1] || client0;
+      const chunkPromises = [];
+
+      // Chunk 0 Promise
+      const chunk0Promise = this.synthesizeChunk(client0, groups[0]).then((buf) => {
+        if (buf && buf.length > 0) {
+          // Immediately dispatch first chunk so narrator begins speaking right away
+          this.dispatchAudio(buf, rate, true);
+        }
+        return buf;
+      });
+      chunkPromises.push(chunk0Promise);
+
+      // Remaining Chunks synthesized in parallel
+      for (let i = 1; i < groups.length; i++) {
+        const client = i % 2 === 0 ? client0 : client1;
+        const groupText = groups[i];
+        const nextPromise = this.synthesizeChunk(client, groupText).then((buf) => {
+          if (buf && buf.length > 0) {
+            // Dispatch subsequent chunk to queue seamlessly in renderer Web Audio API
+            this.dispatchAudio(buf, rate, false);
+          }
+          return buf;
+        });
+        chunkPromises.push(nextPromise);
+      }
+
+      const allBuffers = await Promise.all(chunkPromises);
+      const combinedBuffer = Buffer.concat(allBuffers.filter((b) => b && b.length > 0));
+      if (combinedBuffer.length > 0) {
+        this.lastAnswerBuffer = combinedBuffer;
+      }
+      return combinedBuffer;
     } catch (err) {
       console.error('Error synthesizing speech in speakAnswer:', err);
       return Buffer.alloc(0);
@@ -122,7 +265,7 @@ class TTSEngine {
     }
 
     const playbackRate = speed === 0.75 ? 0.75 : 1.0;
-    this.dispatchAudio(this.lastAnswerBuffer, playbackRate);
+    this.dispatchAudio(this.lastAnswerBuffer, playbackRate, true);
     return true;
   }
 
@@ -132,9 +275,11 @@ class TTSEngine {
   async speakRateLimitAlert() {
     try {
       if (!this.rateLimitFallbackBuffer) {
-        this.rateLimitFallbackBuffer = await this.synthesizeToBuffer(ALL_KEYS_EXHAUSTED_MESSAGE);
+        const pool = await this.initPool();
+        const client = pool[0] || new MsEdgeTTS();
+        this.rateLimitFallbackBuffer = await this.synthesizeChunk(client, ALL_KEYS_EXHAUSTED_MESSAGE);
       }
-      this.dispatchAudio(this.rateLimitFallbackBuffer, 1.0);
+      this.dispatchAudio(this.rateLimitFallbackBuffer, 1.0, true);
     } catch (_err) {
       // Handled silently
     }
@@ -144,14 +289,15 @@ class TTSEngine {
    * Helper to dispatch audio playback to Renderer Web Audio API.
    * @param {Buffer} buffer
    * @param {number} rate
+   * @param {boolean} [isFirstChunk=true]
    */
-  dispatchAudio(buffer, rate = 1.0) {
+  dispatchAudio(buffer, rate = 1.0, isFirstChunk = true) {
     if (!buffer || buffer.length === 0) return;
     const { ttsVolume } = getVolumes();
     const sinkId = getAudioDeviceId();
 
     if (this.playbackDispatcher) {
-      this.playbackDispatcher(buffer, rate, ttsVolume, sinkId);
+      this.playbackDispatcher(buffer, rate, ttsVolume, sinkId, isFirstChunk);
     }
   }
 
@@ -162,8 +308,9 @@ class TTSEngine {
     if (this.isInitializing) return;
     this.isInitializing = true;
     try {
-      await this.initClient();
-      this.rateLimitFallbackBuffer = await this.synthesizeToBuffer(ALL_KEYS_EXHAUSTED_MESSAGE);
+      const pool = await this.initPool();
+      const client = pool[0] || new MsEdgeTTS();
+      this.rateLimitFallbackBuffer = await this.synthesizeChunk(client, ALL_KEYS_EXHAUSTED_MESSAGE);
     } catch (_e) {
       // Ignored during startup warmup
     } finally {
@@ -176,5 +323,8 @@ const ttsEngine = new TTSEngine();
 
 module.exports = {
   ttsEngine,
+  cleanTextForTTS,
+  splitSentences,
+  groupSentences,
   ALL_KEYS_EXHAUSTED_MESSAGE,
 };
