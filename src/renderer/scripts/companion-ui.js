@@ -11,10 +11,7 @@ class CompanionUI {
     this.armBtn = document.getElementById('companion-arm-btn');
     this.btnLabel = document.getElementById('companion-btn-label');
 
-    this.radioSave = document.getElementById('radio-card-save');
-    this.radioThrow = document.getElementById('radio-card-throw');
-    this.inputSave = this.radioSave.querySelector('input');
-    this.inputThrow = this.radioThrow.querySelector('input');
+    this.throwModeCheckbox = document.getElementById('throw-mode-checkbox');
 
     this.stagingBanner = document.getElementById('staging-status-banner');
     this.stagingText = document.getElementById('staging-status-text');
@@ -65,14 +62,13 @@ class CompanionUI {
       }
     });
 
-    // Save vs Throw Radio selection
-    this.radioSave.addEventListener('click', () => {
-      this.setSubMode('save');
-    });
-
-    this.radioThrow.addEventListener('click', () => {
-      this.setSubMode('throw');
-    });
+    // Throw Mode Checkbox change listener
+    if (this.throwModeCheckbox) {
+      this.throwModeCheckbox.addEventListener('change', async () => {
+        const mode = this.throwModeCheckbox.checked ? 'throw' : 'save';
+        await this.setSubMode(mode);
+      });
+    }
 
     // Arm button click
     this.armBtn.addEventListener('click', async () => {
@@ -136,15 +132,9 @@ class CompanionUI {
       this.btnLabel.textContent = 'Companion';
     }
 
-    // Sub-mode radio selection
-    if (this.currentState.subMode === 'throw') {
-      this.radioThrow.classList.add('is-selected');
-      this.radioSave.classList.remove('is-selected');
-      this.inputThrow.checked = true;
-    } else {
-      this.radioSave.classList.add('is-selected');
-      this.radioThrow.classList.remove('is-selected');
-      this.inputSave.checked = true;
+    // Throw Mode Checkbox sync
+    if (this.throwModeCheckbox) {
+      this.throwModeCheckbox.checked = (this.currentState.subMode === 'throw');
     }
 
     // Reasoning segmented control

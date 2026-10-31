@@ -1,465 +1,956 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en" data-theme="dark">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Omniscience - Multimodal Problem Solving Desktop Agent</title>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Omniscience - Multimodal Problem Solving Desktop Agent</title>
 
-  <!-- KaTeX & Highlight.js stylesheets -->
-  <link rel="stylesheet" href="../../node_modules/katex/dist/katex.min.css">
-  <link rel="stylesheet" href="../../node_modules/highlight.js/styles/github-dark.css">
+    <!-- KaTeX & Highlight.js stylesheets -->
+    <link rel="stylesheet" href="../../node_modules/katex/dist/katex.min.css" />
+    <link
+      rel="stylesheet"
+      href="../../node_modules/highlight.js/styles/github-dark.css"
+    />
 
-  <!-- Omniscience Vanilla CSS3 Architecture -->
-  <link rel="stylesheet" href="styles/variables.css">
-  <link rel="stylesheet" href="styles/layout.css">
-  <link rel="stylesheet" href="styles/components.css">
-</head>
-<body>
-  <div class="app-container">
-    <!-- LEFT SIDEBAR -->
-    <aside class="sidebar" id="sidebar">
-      <div class="sidebar__header">
-        <div class="sidebar__brand">
-          <svg class="svg-icon svg-icon--lg" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg>
-          <span>Omniscience</span>
-        </div>
-        <button class="btn btn--icon btn--ghost" id="sidebar-collapse-btn" title="Collapse sidebar">
-          <svg class="svg-icon" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 3v18"></path></svg>
-        </button>
-      </div>
-
-      <div class="sidebar__actions">
-        <button class="btn btn--new-chat" id="new-chat-btn">
-          <svg class="svg-icon" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-          <span>New Chat</span>
-        </button>
-      </div>
-
-      <div class="sidebar__history-section">
-        <div class="sidebar__history-label">Recent Conversations</div>
-        <ul class="sidebar__history-list" id="conversation-history-list">
-          <!-- Dynamically populated via app.js -->
-        </ul>
-      </div>
-
-      <div class="sidebar__footer">
-        <div class="sidebar__key-pool-indicator" id="sidebar-key-status">
-          <div style="display: flex; align-items: center;">
-            <span class="sidebar__key-pool-dot" id="sidebar-key-dot"></span>
-            <span id="sidebar-key-text">0 / 0 Keys Ready</span>
+    <!-- Omniscience Vanilla CSS3 Architecture -->
+    <link rel="stylesheet" href="styles/variables.css" />
+    <link rel="stylesheet" href="styles/layout.css" />
+    <link rel="stylesheet" href="styles/components.css" />
+  </head>
+  <body>
+    <div class="app-container">
+      <!-- LEFT SIDEBAR -->
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar__header">
+          <div class="sidebar__brand">
+            <svg class="svg-icon svg-icon--lg" viewBox="0 0 24 24">
+              <path
+                d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"
+              ></path>
+            </svg>
+            <span>Omniscience</span>
           </div>
-          <span style="font-size: 0.7rem; color: var(--color-text-muted);">Pool</span>
-        </div>
-        <button class="btn btn--ghost" id="open-keybinds-btn" style="width: 100%; justify-content: flex-start; margin-bottom: var(--space-1);">
-          <svg class="svg-icon" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"></rect><path d="M6 8h.01"></path><path d="M10 8h.01"></path><path d="M14 8h.01"></path><path d="M18 8h.01"></path><path d="M8 12h.01"></path><path d="M12 12h.01"></path><path d="M16 12h.01"></path><path d="M7 16h10"></path></svg>
-          <span>Shortcuts</span>
-        </button>
-        <button class="btn btn--ghost" id="open-settings-btn" style="width: 100%; justify-content: flex-start;">
-          <svg class="svg-icon" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
-          <span>Settings</span>
-        </button>
-      </div>
-    </aside>
-
-    <!-- MAIN WORKSPACE -->
-    <main class="main-content">
-      <!-- TOP HEADER BAR -->
-      <header class="top-header">
-        <div class="top-header__left">
-          <button class="btn btn--icon btn--ghost" id="sidebar-expand-btn" style="display: none;" title="Expand sidebar">
-            <svg class="svg-icon" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 3v18"></path></svg>
+          <button
+            class="btn btn--icon btn--ghost"
+            id="sidebar-collapse-btn"
+            title="Collapse sidebar"
+          >
+            <svg class="svg-icon" viewBox="0 0 24 24">
+              <rect width="18" height="18" x="3" y="3" rx="2"></rect>
+              <path d="M9 3v18"></path>
+            </svg>
           </button>
-          <div class="model-badge" title="Select active Gemini model">
-            <svg class="svg-icon svg-icon--sm model-badge__sparkle" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg>
-            <select id="model-select" class="model-select">
-              <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash</option>
-              <option value="gemini-3.6-flash">Gemini 3.6 Flash (Fast)</option>
-              <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite</option>
-            </select>
-          </div>
         </div>
 
-        <div class="top-header__center">
-          <div class="segmented-control" id="reasoning-segmented-control">
-            <button class="segmented-control__item is-active" data-level="low">Low</button>
-            <button class="segmented-control__item" data-level="medium">Medium</button>
-            <button class="segmented-control__item" data-level="high">High</button>
-          </div>
-        </div>
-
-        <div class="top-header__right">
-          <!-- COMPANION RADAR BUTTON -->
-          <button class="companion-toggle-btn" id="companion-popover-btn" title="Companion Mode Settings">
-            <span class="companion-pulse-dot"></span>
-            <svg class="svg-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle><line x1="12" y1="12" x2="18.5" y2="5.5"></line></svg>
-            <span id="companion-btn-label">Companion</span>
+        <div class="sidebar__actions">
+          <button class="btn btn--new-chat" id="new-chat-btn">
+            <svg class="svg-icon" viewBox="0 0 24 24">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            <span>New Chat</span>
           </button>
-
-          <!-- COMPANION POPOVER -->
-          <div class="companion-popover is-hidden" id="companion-popover">
-            <div class="companion-popover__header">
-              <span class="companion-popover__title">Stealth Companion Mode</span>
-              <button class="btn btn--icon btn--ghost btn--sm" id="companion-popover-close">
-                <svg class="svg-icon svg-icon--sm" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
-              </button>
-            </div>
-
-            <div class="companion-popover__section">
-              <span class="companion-popover__label">Companion Sub-Mode</span>
-              <div class="companion-popover__radio-group">
-                <label class="radio-card is-selected" id="radio-card-save">
-                  <input type="radio" name="companion-submode" value="save" class="radio-card__input" checked>
-                  <div class="radio-card__text">
-                    <span class="radio-card__title">Save Mode</span>
-                    <span class="radio-card__desc">Saves all captured screenshots, voice notes, and answers into the active chat session. Uses multi-turn memory.</span>
-                  </div>
-                </label>
-                <label class="radio-card" id="radio-card-throw">
-                  <input type="radio" name="companion-submode" value="throw" class="radio-card__input">
-                  <div class="radio-card__text">
-                    <span class="radio-card__title">Throw Mode</span>
-                    <span class="radio-card__desc">Zero memory, zero SQLite logging. Operations exist strictly in volatile RAM and are wiped after spoken TTS.</span>
-                  </div>
-                </label>
-              </div>
-            </div>
-
-            <div class="companion-popover__section">
-              <span class="companion-popover__label">Standby Lifecycle</span>
-              <button class="btn btn--primary companion-popover__arm-btn" id="companion-arm-btn">
-                Activate Companion Standby
-              </button>
-              <span style="font-size: 0.72rem; color: var(--color-text-muted); line-height: 1.4;">
-                When armed, closing the window will hide Omniscience into the background system tray without terminating background hooks.
-              </span>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      <!-- CHAT VIEWPORT -->
-      <div class="chat-viewport" id="chat-viewport">
-        <div class="chat-viewport__inner" id="chat-messages-container">
-          <!-- WELCOME PLACEHOLDER (Visible when empty) -->
-          <div class="chat-welcome" id="chat-welcome-screen">
-            <h1 class="chat-welcome__title">Omniscience</h1>
-            <p class="chat-welcome__subtitle">
-              Stealth Multimodal Problem Solving Desktop Agent powered by Gemini 3.8 Flash.
-              Ask complex questions, attach screenshots, or arm Companion Mode to solve problems silently in the background.
-            </p>
-            <div style="display: flex; gap: var(--space-3); margin-top: var(--space-4); flex-wrap: wrap; justify-content: center;">
-              <div style="background: var(--color-bg-surface); padding: var(--space-3); border-radius: var(--radius-md); border: 1px solid var(--color-border-subtle); text-align: left; max-width: 220px;">
-                <div style="font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); color: var(--color-primary); margin-bottom: 4px;">R-CTRL + Arrow Up</div>
-                <div style="font-size: 0.75rem; color: var(--color-text-secondary);">Capture full-screen into memory staging buffer.</div>
-              </div>
-              <div style="background: var(--color-bg-surface); padding: var(--space-3); border-radius: var(--radius-md); border: 1px solid var(--color-border-subtle); text-align: left; max-width: 220px;">
-                <div style="font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); color: var(--color-primary); margin-bottom: 4px;">L-CTRL + L-SHIFT</div>
-                <div style="font-size: 0.75rem; color: var(--color-text-secondary);">Hold 1s, move cursor to crop region blind.</div>
-              </div>
-              <div style="background: var(--color-bg-surface); padding: var(--space-3); border-radius: var(--radius-md); border: 1px solid var(--color-border-subtle); text-align: left; max-width: 220px;">
-                <div style="font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); color: var(--color-primary); margin-bottom: 4px;">R-CTRL + Arrow Right</div>
-                <div style="font-size: 0.75rem; color: var(--color-text-secondary);">Dispatch all staged captures to AI and speak answer.</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- COMPOSER -->
-      <div class="composer-container">
-        <!-- STAGED ITEMS BANNER (Shown when items are staged in Companion Mode) -->
-        <div id="staging-status-banner" style="display: none; width: 100%; max-width: var(--composer-max-width); padding: var(--space-2) var(--space-4); background-color: var(--color-primary-subtle); border: 1px solid var(--color-primary); border-radius: var(--radius-md); margin-bottom: var(--space-2); font-size: var(--font-size-xs); justify-content: space-between; align-items: center;">
-          <span id="staging-status-text" style="color: var(--color-primary); font-weight: var(--font-weight-medium);">0 screenshot(s) staged in memory</span>
-          <div style="display: flex; gap: var(--space-2);">
-            <button class="btn btn--sm btn--ghost" id="staging-clear-btn" style="color: var(--color-danger);">Purge Staging</button>
-            <button class="btn btn--sm btn--primary" id="staging-send-btn">Send to AI</button>
-          </div>
         </div>
 
-        <div class="composer">
-          <div class="composer__attachments-preview" id="composer-attachments">
-            <!-- Dynamic attachment chips -->
+        <div class="sidebar__history-section">
+          <div class="sidebar__history-label">Recent Conversations</div>
+          <ul class="sidebar__history-list" id="conversation-history-list">
+            <!-- Dynamically populated via app.js -->
+          </ul>
+        </div>
+
+        <div class="sidebar__footer">
+          <div class="sidebar__key-pool-indicator" id="sidebar-key-status">
+            <div style="display: flex; align-items: center">
+              <span class="sidebar__key-pool-dot" id="sidebar-key-dot"></span>
+              <span id="sidebar-key-text">0 / 0 Keys Ready</span>
+            </div>
+            <span style="font-size: 0.7rem; color: var(--color-text-muted)"
+              >Pool</span
+            >
           </div>
-          <div class="composer__input-row">
-            <button class="btn btn--icon btn--ghost" id="attach-file-btn" title="Attach file or screenshot">
-              <svg class="svg-icon" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+          <button
+            class="btn btn--ghost"
+            id="open-keybinds-btn"
+            style="
+              width: 100%;
+              justify-content: flex-start;
+              margin-bottom: var(--space-1);
+            "
+          >
+            <svg class="svg-icon" viewBox="0 0 24 24">
+              <rect width="20" height="16" x="2" y="4" rx="2"></rect>
+              <path d="M6 8h.01"></path>
+              <path d="M10 8h.01"></path>
+              <path d="M14 8h.01"></path>
+              <path d="M18 8h.01"></path>
+              <path d="M8 12h.01"></path>
+              <path d="M12 12h.01"></path>
+              <path d="M16 12h.01"></path>
+              <path d="M7 16h10"></path>
+            </svg>
+            <span>Shortcuts</span>
+          </button>
+          <button
+            class="btn btn--ghost"
+            id="open-settings-btn"
+            style="width: 100%; justify-content: flex-start"
+          >
+            <svg class="svg-icon" viewBox="0 0 24 24">
+              <line x1="4" y1="21" x2="4" y2="14"></line>
+              <line x1="4" y1="10" x2="4" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="12"></line>
+              <line x1="12" y1="8" x2="12" y2="3"></line>
+              <line x1="20" y1="21" x2="20" y2="16"></line>
+              <line x1="20" y1="12" x2="20" y2="3"></line>
+              <line x1="1" y1="14" x2="7" y2="14"></line>
+              <line x1="9" y1="8" x2="15" y2="8"></line>
+              <line x1="17" y1="16" x2="23" y2="16"></line>
+            </svg>
+            <span>Settings</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- MAIN WORKSPACE -->
+      <main class="main-content">
+        <!-- TOP HEADER BAR -->
+        <header class="top-header">
+          <div class="top-header__left">
+            <button
+              class="btn btn--icon btn--ghost"
+              id="sidebar-expand-btn"
+              style="display: none"
+              title="Expand sidebar"
+            >
+              <svg class="svg-icon" viewBox="0 0 24 24">
+                <rect width="18" height="18" x="3" y="3" rx="2"></rect>
+                <path d="M9 3v18"></path>
+              </svg>
             </button>
-            <textarea class="composer__textarea" id="composer-textarea" placeholder="Ask anything, solve an equation, or explain code..." rows="1"></textarea>
-            <button class="btn btn--icon btn--primary" id="send-message-btn" title="Send message">
-              <svg class="svg-icon" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>
-            </button>
-          </div>
-        </div>
-        <div class="composer__footer-hint">
-          Omniscience operates on Gemini 3.8 Flash. Press Enter to send, Shift+Enter for new line.
-        </div>
-      </div>
-    </main>
-
-    <!-- SETTINGS MODAL -->
-    <div class="modal-backdrop is-hidden" id="settings-modal-backdrop">
-      <div class="modal" id="settings-modal">
-        <div class="modal__header">
-          <span class="modal__title">System & Audio Configuration</span>
-          <button class="btn btn--icon btn--ghost btn--sm" id="close-settings-modal-btn">
-            <svg class="svg-icon" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
-          </button>
-        </div>
-
-        <div class="modal__body">
-          <!-- SECTION 1: API KEY POOL -->
-          <div class="modal__section">
-            <div class="modal__section-title">
-              <svg class="svg-icon" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"></circle><path d="m21 2-9.6 9.6"></path><path d="m15.5 7.5 3 3L22 7l-3-3"></path></svg>
-              <span>Google AI Studio API Key Pool</span>
+            <div class="model-badge" title="Select active Gemini model">
+              <svg
+                class="svg-icon svg-icon--sm model-badge__sparkle"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"
+                ></path>
+              </svg>
+              <select id="model-select" class="model-select">
+                <option value="gemini-3.8-flash" selected>
+                  Gemini 3.8 Flash
+                </option>
+                <option value="gemini-3.6-flash">
+                  Gemini 3.6 Flash (Fast)
+                </option>
+                <option value="gemini-3.5-flash-lite">
+                  Gemini 3.5 Flash Lite
+                </option>
+              </select>
             </div>
-            <p class="modal__section-desc">
-              Register 8 or more API keys to enable seamless round-robin rotation and automatic 60-second cooldown failover on rate limits.
-            </p>
-            <div class="form-group" style="flex-direction: row; gap: var(--space-2);">
-              <input type="password" class="form-input" id="new-api-key-input" placeholder="Paste Google AI Studio API key here" style="flex: 1;">
-              <button class="btn btn--primary" id="add-api-key-btn">Add Key</button>
-            </div>
-            <div class="key-pool-list" id="modal-key-pool-list">
-              <!-- Dynamically populated -->
-            </div>
-          </div>
-
-          <!-- SECTION 2: AUDIO OUTPUT DEVICE -->
-          <div class="modal__section">
-            <div class="modal__section-title">
-              <svg class="svg-icon" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>
-              <span>Audio Output Device Routing</span>
-            </div>
-            <p class="modal__section-desc">
-              Direct all synthesized confirmation earcons and spoken English neural TTS answers to a specific audio output device.
-            </p>
-            <div class="form-group">
-              <select class="form-select" id="audio-output-device-select">
-                <option value="default">Default System Audio Device</option>
+            <div
+              class="output-profile-badge"
+              title="Select Companion Output Profile"
+            >
+              <svg class="svg-icon svg-icon--sm" viewBox="0 0 24 24">
+                <path
+                  d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+                ></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+                <polyline points="10 9 9 9 8 9"></polyline>
+              </svg>
+              <select id="output-profile-select" class="output-profile-select">
+                <option value="SHORT_ANSWER" selected>
+                  Short Answer (Default)
+                </option>
+                <option value="MULTIPLE_CHOICE">Multiple Choice</option>
+                <option value="ESSAY">Essay</option>
+                <option value="PROGRAMMING">Programming</option>
+                <option value="MATHEMATICS">Mathematics</option>
               </select>
             </div>
           </div>
 
-          <!-- SECTION 3: VOLUME CONTROLS -->
-          <div class="modal__section">
-            <div class="modal__section-title">
-              <svg class="svg-icon" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon></svg>
-              <span>Independent Audio Gain Levels</span>
+          <div class="top-header__center">
+            <div class="segmented-control" id="reasoning-segmented-control">
+              <button
+                class="segmented-control__item is-active"
+                data-level="low"
+              >
+                Low
+              </button>
+              <button class="segmented-control__item" data-level="medium">
+                Medium
+              </button>
+              <button class="segmented-control__item" data-level="high">
+                High
+              </button>
             </div>
-            <div class="form-group">
-              <div style="display: flex; justify-content: space-between;">
-                <label class="form-label" for="earcon-volume-slider">Earcon Confirmation Tut Volume</label>
-                <span style="font-size: var(--font-size-xs); color: var(--color-text-secondary);" id="earcon-volume-label">80%</span>
+          </div>
+
+          <div class="top-header__right">
+            <!-- COMPANION RADAR BUTTON -->
+            <button
+              class="companion-toggle-btn"
+              id="companion-popover-btn"
+              title="Companion Mode Settings"
+            >
+              <span class="companion-pulse-dot"></span>
+              <svg class="svg-icon" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10"></circle>
+                <circle cx="12" cy="12" r="6"></circle>
+                <circle cx="12" cy="12" r="2"></circle>
+                <line x1="12" y1="12" x2="18.5" y2="5.5"></line>
+              </svg>
+              <span id="companion-btn-label">Companion</span>
+            </button>
+
+            <!-- COMPANION POPOVER -->
+            <div class="companion-popover is-hidden" id="companion-popover">
+              <div class="companion-popover__header">
+                <span class="companion-popover__title"
+                  >Stealth Companion Mode</span
+                >
+                <button
+                  class="btn btn--icon btn--ghost btn--sm"
+                  id="companion-popover-close"
+                >
+                  <svg class="svg-icon svg-icon--sm" viewBox="0 0 24 24">
+                    <path d="M18 6 6 18"></path>
+                    <path d="m6 6 12 12"></path>
+                  </svg>
+                </button>
               </div>
-              <input type="range" class="form-range" id="earcon-volume-slider" min="0" max="100" value="80">
+
+              <div class="companion-popover__section">
+                <span class="companion-popover__label">Persistence Mode</span>
+                <label class="checkbox-control" id="throw-mode-label">
+                  <input
+                    type="checkbox"
+                    id="throw-mode-checkbox"
+                    class="checkbox-control__input"
+                  />
+                  <span class="checkbox-control__label"
+                    >Throw Mode (Stateless / No History)</span
+                  >
+                </label>
+                <span class="companion-popover__hint">
+                  Unchecked: Save Mode (persists into chat session). Checked:
+                  Throw Mode (volatile RAM only, no SQLite writes, zero context
+                  memory).
+                </span>
+              </div>
+
+              <div class="companion-popover__section">
+                <span class="companion-popover__label">Standby Lifecycle</span>
+                <button
+                  class="btn btn--primary companion-popover__arm-btn"
+                  id="companion-arm-btn"
+                >
+                  Activate Companion Standby
+                </button>
+                <span
+                  style="
+                    font-size: 0.72rem;
+                    color: var(--color-text-muted);
+                    line-height: 1.4;
+                  "
+                >
+                  When armed, closing the window will hide Omniscience into the
+                  background system tray without terminating background hooks.
+                </span>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <!-- CHAT VIEWPORT -->
+        <div class="chat-viewport" id="chat-viewport">
+          <div class="chat-viewport__inner" id="chat-messages-container">
+            <!-- WELCOME PLACEHOLDER (Visible when empty) -->
+            <div class="chat-welcome" id="chat-welcome-screen">
+              <h1 class="chat-welcome__title">Omniscience</h1>
+              <p class="chat-welcome__subtitle">
+                Stealth Multimodal Problem Solving Desktop Agent powered by
+                Gemini 3.8 Flash. Ask complex questions, attach screenshots, or
+                arm Companion Mode to solve problems silently in the background.
+              </p>
+              <div
+                style="
+                  display: flex;
+                  gap: var(--space-3);
+                  margin-top: var(--space-4);
+                  flex-wrap: wrap;
+                  justify-content: center;
+                "
+              >
+                <div
+                  style="
+                    background: var(--color-bg-surface);
+                    padding: var(--space-3);
+                    border-radius: var(--radius-md);
+                    border: 1px solid var(--color-border-subtle);
+                    text-align: left;
+                    max-width: 220px;
+                  "
+                >
+                  <div
+                    style="
+                      font-size: var(--font-size-xs);
+                      font-weight: var(--font-weight-semibold);
+                      color: var(--color-primary);
+                      margin-bottom: 4px;
+                    "
+                  >
+                    R-CTRL + Arrow Up
+                  </div>
+                  <div
+                    style="
+                      font-size: 0.75rem;
+                      color: var(--color-text-secondary);
+                    "
+                  >
+                    Capture full-screen into memory staging buffer.
+                  </div>
+                </div>
+                <div
+                  style="
+                    background: var(--color-bg-surface);
+                    padding: var(--space-3);
+                    border-radius: var(--radius-md);
+                    border: 1px solid var(--color-border-subtle);
+                    text-align: left;
+                    max-width: 220px;
+                  "
+                >
+                  <div
+                    style="
+                      font-size: var(--font-size-xs);
+                      font-weight: var(--font-weight-semibold);
+                      color: var(--color-primary);
+                      margin-bottom: 4px;
+                    "
+                  >
+                    L-CTRL + L-SHIFT
+                  </div>
+                  <div
+                    style="
+                      font-size: 0.75rem;
+                      color: var(--color-text-secondary);
+                    "
+                  >
+                    Hold 1s, move cursor to crop region blind.
+                  </div>
+                </div>
+                <div
+                  style="
+                    background: var(--color-bg-surface);
+                    padding: var(--space-3);
+                    border-radius: var(--radius-md);
+                    border: 1px solid var(--color-border-subtle);
+                    text-align: left;
+                    max-width: 220px;
+                  "
+                >
+                  <div
+                    style="
+                      font-size: var(--font-size-xs);
+                      font-weight: var(--font-weight-semibold);
+                      color: var(--color-primary);
+                      margin-bottom: 4px;
+                    "
+                  >
+                    R-CTRL + Arrow Right
+                  </div>
+                  <div
+                    style="
+                      font-size: 0.75rem;
+                      color: var(--color-text-secondary);
+                    "
+                  >
+                    Dispatch all staged captures to AI and speak answer.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- COMPOSER -->
+        <div class="composer-container">
+          <!-- STAGED ITEMS BANNER (Shown when items are staged in Companion Mode) -->
+          <div
+            id="staging-status-banner"
+            style="
+              display: none;
+              width: 100%;
+              max-width: var(--composer-max-width);
+              padding: var(--space-2) var(--space-4);
+              background-color: var(--color-primary-subtle);
+              border: 1px solid var(--color-primary);
+              border-radius: var(--radius-md);
+              margin-bottom: var(--space-2);
+              font-size: var(--font-size-xs);
+              justify-content: space-between;
+              align-items: center;
+            "
+          >
+            <span
+              id="staging-status-text"
+              style="
+                color: var(--color-primary);
+                font-weight: var(--font-weight-medium);
+              "
+              >0 screenshot(s) staged in memory</span
+            >
+            <div style="display: flex; gap: var(--space-2)">
+              <button
+                class="btn btn--sm btn--ghost"
+                id="staging-clear-btn"
+                style="color: var(--color-danger)"
+              >
+                Purge Staging
+              </button>
+              <button class="btn btn--sm btn--primary" id="staging-send-btn">
+                Send to AI
+              </button>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div
+              class="composer__attachments-preview"
+              id="composer-attachments"
+            >
+              <!-- Dynamic attachment chips -->
+            </div>
+            <div class="composer__input-row">
+              <button
+                class="btn btn--icon btn--ghost"
+                id="attach-file-btn"
+                title="Attach file or screenshot"
+              >
+                <svg class="svg-icon" viewBox="0 0 24 24">
+                  <path
+                    d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"
+                  ></path>
+                </svg>
+              </button>
+              <textarea
+                class="composer__textarea"
+                id="composer-textarea"
+                placeholder="Ask anything, solve an equation, or explain code..."
+                rows="1"
+              ></textarea>
+              <button
+                class="btn btn--icon btn--primary"
+                id="send-message-btn"
+                title="Send message"
+              >
+                <svg class="svg-icon" viewBox="0 0 24 24">
+                  <path d="m22 2-7 20-4-9-9-4Z"></path>
+                  <path d="M22 2 11 13"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="composer__footer-hint">
+            Omniscience operates on Gemini 3.8 Flash. Press Enter to send,
+            Shift+Enter for new line.
+          </div>
+        </div>
+      </main>
+
+      <!-- SETTINGS MODAL -->
+      <div class="modal-backdrop is-hidden" id="settings-modal-backdrop">
+        <div class="modal" id="settings-modal">
+          <div class="modal__header">
+            <span class="modal__title">System & Audio Configuration</span>
+            <button
+              class="btn btn--icon btn--ghost btn--sm"
+              id="close-settings-modal-btn"
+            >
+              <svg class="svg-icon" viewBox="0 0 24 24">
+                <path d="M18 6 6 18"></path>
+                <path d="m6 6 12 12"></path>
+              </svg>
+            </button>
+          </div>
+
+          <div class="modal__body">
+            <!-- SECTION 1: API KEY POOL -->
+            <div class="modal__section">
+              <div class="modal__section-title">
+                <svg class="svg-icon" viewBox="0 0 24 24">
+                  <circle cx="7.5" cy="15.5" r="5.5"></circle>
+                  <path d="m21 2-9.6 9.6"></path>
+                  <path d="m15.5 7.5 3 3L22 7l-3-3"></path>
+                </svg>
+                <span>Google AI Studio API Key Pool</span>
+              </div>
+              <p class="modal__section-desc">
+                Register 8 or more API keys to enable seamless round-robin
+                rotation and automatic 60-second cooldown failover on rate
+                limits.
+              </p>
+              <div
+                class="form-group"
+                style="flex-direction: row; gap: var(--space-2)"
+              >
+                <input
+                  type="password"
+                  class="form-input"
+                  id="new-api-key-input"
+                  placeholder="Paste Google AI Studio API key here"
+                  style="flex: 1"
+                />
+                <button class="btn btn--primary" id="add-api-key-btn">
+                  Add Key
+                </button>
+              </div>
+              <div class="key-pool-list" id="modal-key-pool-list">
+                <!-- Dynamically populated -->
+              </div>
             </div>
 
-            <div class="form-group">
-              <div style="display: flex; justify-content: space-between;">
-                <label class="form-label" for="tts-volume-slider">TTS Spoken Answer Volume</label>
-                <span style="font-size: var(--font-size-xs); color: var(--color-text-secondary);" id="tts-volume-label">100%</span>
+            <!-- SECTION 2: AUDIO OUTPUT DEVICE -->
+            <div class="modal__section">
+              <div class="modal__section-title">
+                <svg class="svg-icon" viewBox="0 0 24 24">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+                </svg>
+                <span>Audio Output Device Routing</span>
               </div>
-              <input type="range" class="form-range" id="tts-volume-slider" min="0" max="100" value="100">
+              <p class="modal__section-desc">
+                Direct all synthesized confirmation earcons and spoken English
+                neural TTS answers to a specific audio output device.
+              </p>
+              <div class="form-group">
+                <select class="form-select" id="audio-output-device-select">
+                  <option value="default">Default System Audio Device</option>
+                </select>
+              </div>
             </div>
 
-            <div style="display: flex; gap: var(--space-2); margin-top: var(--space-2);">
-              <button class="btn btn--sm btn--ghost" id="test-earcon-btn">Test Earcon Tone</button>
-              <button class="btn btn--sm btn--ghost" id="test-tts-btn">Test Neural Speech</button>
+            <!-- SECTION 3: VOLUME CONTROLS -->
+            <div class="modal__section">
+              <div class="modal__section-title">
+                <svg class="svg-icon" viewBox="0 0 24 24">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                </svg>
+                <span>Independent Audio Gain Levels</span>
+              </div>
+              <div class="form-group">
+                <div style="display: flex; justify-content: space-between">
+                  <label class="form-label" for="earcon-volume-slider"
+                    >Earcon Confirmation Tut Volume</label
+                  >
+                  <span
+                    style="
+                      font-size: var(--font-size-xs);
+                      color: var(--color-text-secondary);
+                    "
+                    id="earcon-volume-label"
+                    >80%</span
+                  >
+                </div>
+                <input
+                  type="range"
+                  class="form-range"
+                  id="earcon-volume-slider"
+                  min="0"
+                  max="100"
+                  value="80"
+                />
+              </div>
+
+              <div class="form-group">
+                <div style="display: flex; justify-content: space-between">
+                  <label class="form-label" for="tts-volume-slider"
+                    >TTS Spoken Answer Volume</label
+                  >
+                  <span
+                    style="
+                      font-size: var(--font-size-xs);
+                      color: var(--color-text-secondary);
+                    "
+                    id="tts-volume-label"
+                    >100%</span
+                  >
+                </div>
+                <input
+                  type="range"
+                  class="form-range"
+                  id="tts-volume-slider"
+                  min="0"
+                  max="100"
+                  value="100"
+                />
+              </div>
+
+              <div
+                style="
+                  display: flex;
+                  gap: var(--space-2);
+                  margin-top: var(--space-2);
+                "
+              >
+                <button class="btn btn--sm btn--ghost" id="test-earcon-btn">
+                  Test Earcon Tone
+                </button>
+                <button class="btn btn--sm btn--ghost" id="test-tts-btn">
+                  Test Neural Speech
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal__footer">
+            <button class="btn btn--primary" id="save-settings-modal-btn">
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- KEYBOARD SHORTCUTS MODAL -->
+    <div class="modal-backdrop is-hidden" id="keybinds-modal">
+      <div class="modal modal--wide">
+        <div class="modal__header">
+          <div style="display: flex; align-items: center; gap: var(--space-2)">
+            <svg class="svg-icon" viewBox="0 0 24 24">
+              <rect width="20" height="16" x="2" y="4" rx="2"></rect>
+              <path d="M6 8h.01"></path>
+              <path d="M10 8h.01"></path>
+              <path d="M14 8h.01"></path>
+              <path d="M18 8h.01"></path>
+              <path d="M8 12h.01"></path>
+              <path d="M12 12h.01"></path>
+              <path d="M16 12h.01"></path>
+              <path d="M7 16h10"></path>
+            </svg>
+            <span class="modal__title"
+              >Keyboard Shortcuts & Earcon Reference</span
+            >
+          </div>
+          <button
+            class="btn btn--icon btn--ghost btn--sm"
+            id="close-keybinds-modal-btn"
+          >
+            <svg class="svg-icon" viewBox="0 0 24 24">
+              <path d="M18 6 6 18"></path>
+              <path d="m6 6 12 12"></path>
+            </svg>
+          </button>
+        </div>
+
+        <div class="modal__body" style="max-height: 70vh; overflow-y: auto">
+          <!-- GROUP 1: STEALTH COMPANION MODE -->
+          <div class="keybind-group">
+            <div class="keybind-group__title">
+              <svg class="svg-icon svg-icon--sm" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10"></circle>
+                <circle cx="12" cy="12" r="6"></circle>
+                <circle cx="12" cy="12" r="2"></circle>
+                <line x1="12" y1="12" x2="18.5" y2="5.5"></line>
+              </svg>
+              <span>Stealth Companion Mode (Global Background Controls)</span>
+            </div>
+
+            <div class="keybind-card">
+              <div class="keybind-card__info">
+                <span class="keybind-card__action"
+                  >Capture Full-Screen Screenshot</span
+                >
+                <span class="keybind-card__desc"
+                  >Captures top-most screen frame and stages it in volatile RAM
+                  buffer.</span
+                >
+                <span class="keybind-card__tut"
+                  >Earcon: 1x Short Tut (880 Hz)</span
+                >
+              </div>
+              <div class="keybind-card__keys">
+                <span class="kbd">R-CTRL</span> +
+                <span class="kbd">&uarr; Tap</span>
+              </div>
+            </div>
+
+            <div class="keybind-card">
+              <div class="keybind-card__info">
+                <span class="keybind-card__action"
+                  >Cycle Active Gemini Model</span
+                >
+                <span class="keybind-card__desc"
+                  >Cycles sequentially: 3.5 Flash Lite &rarr; 3.6 Flash &rarr;
+                  3.8 Flash &rarr; 3.5.</span
+                >
+                <span class="keybind-card__tut"
+                  >Earcon: 1x Tut (3.5), 2x Tut (3.6), 3x Tut (3.8)</span
+                >
+              </div>
+              <div class="keybind-card__keys">
+                <span class="kbd">R-CTRL</span> +
+                <span class="kbd">&uarr; Hold 400ms</span>
+              </div>
+            </div>
+
+            <div class="keybind-card">
+              <div class="keybind-card__info">
+                <span class="keybind-card__action"
+                  >Dynamic Blind Region Screenshot</span
+                >
+                <span class="keybind-card__desc"
+                  >Hold 1s to lock start point, move cursor to opposite corner,
+                  release to crop (&ge;30px).</span
+                >
+                <span class="keybind-card__tut"
+                  >Earcon: 1x Short Tut (start & stop) | 2x Low Tut if
+                  &lt;30px</span
+                >
+              </div>
+              <div class="keybind-card__keys">
+                <span class="kbd">L-CTRL</span> +
+                <span class="kbd">L-SHIFT</span>
+                <span
+                  style="font-size: 0.72rem; color: var(--color-text-secondary)"
+                  >(Hold 1s)</span
+                >
+              </div>
+            </div>
+
+            <div class="keybind-card">
+              <div class="keybind-card__info">
+                <span class="keybind-card__action"
+                  >Push-to-Talk Voice Note & Transcription</span
+                >
+                <span class="keybind-card__desc"
+                  >Hold both mouse buttons for 1s, speak prompt into mic,
+                  release to transcribe. Suppresses right-click menu.</span
+                >
+                <span class="keybind-card__tut"
+                  >Earcon: 1x Short Tut (start recording) & 1x Short Tut
+                  (finish)</span
+                >
+              </div>
+              <div class="keybind-card__keys">
+                <span class="kbd">Left Mouse</span> +
+                <span class="kbd">Right Mouse</span>
+                <span
+                  style="font-size: 0.72rem; color: var(--color-text-secondary)"
+                  >(Hold 1s)</span
+                >
+              </div>
+            </div>
+
+            <div class="keybind-card">
+              <div class="keybind-card__info">
+                <span class="keybind-card__action"
+                  >Send Staged Screenshots & Voice to AI</span
+                >
+                <span class="keybind-card__desc"
+                  >Dispatches all staged screenshots and transcribed text to
+                  Gemini, reads answer via Neural TTS.</span
+                >
+                <span class="keybind-card__tut"
+                  >Earcon: 1x Long Tut (350ms, 880 Hz)</span
+                >
+              </div>
+              <div class="keybind-card__keys">
+                <span class="kbd">R-CTRL</span> +
+                <span class="kbd">&rarr;</span>
+              </div>
+            </div>
+
+            <div class="keybind-card">
+              <div class="keybind-card__info">
+                <span class="keybind-card__action"
+                  >Clear All Staged Captures</span
+                >
+                <span class="keybind-card__desc"
+                  >Immediately wipes all accumulated screenshot buffers and
+                  voice notes from RAM.</span
+                >
+                <span class="keybind-card__tut"
+                  >Earcon: 2x Low Tut (440 Hz)</span
+                >
+              </div>
+              <div class="keybind-card__keys">
+                <span class="kbd">R-CTRL</span> +
+                <span class="kbd">Delete</span>
+              </div>
+            </div>
+
+            <div class="keybind-card">
+              <div class="keybind-card__info">
+                <span class="keybind-card__action">CapsLock Prompt Recording</span>
+                <span class="keybind-card__desc">When CapsLock is toggled ON, keystrokes are automatically staged as an AI prompt. Toggle OFF to finish typing. Send with R-CTRL + &rarr;.</span>
+                <span class="keybind-card__tut">State: CapsLock LED ON (recording) / OFF (idle)</span>
+              </div>
+              <div class="keybind-card__keys">
+                <span class="kbd">CapsLock</span> <span style="font-size: 0.72rem; color: var(--color-text-secondary);">(Toggle)</span>
+              </div>
+            </div>
+
+            <div class="keybind-card">
+              <div class="keybind-card__info">
+                <span class="keybind-card__action">Cycle Output Profile</span>
+                <span class="keybind-card__desc">Switches active Companion mode: Short Answer &rarr; Multiple Choice &rarr; Essay &rarr; Programming &rarr; Mathematics.</span>
+                <span class="keybind-card__tut">Earcon: 1x (Short), 2x (MCQ), 3x (Essay), 4x (Code), 5x (Math)</span>
+              </div>
+              <div class="keybind-card__keys">
+                <span class="kbd">R-CTRL</span> + <span class="kbd">R-SHIFT</span>
+              </div>
+            </div>
+
+            <div class="keybind-card">
+              <div class="keybind-card__info">
+                <span class="keybind-card__action"
+                  >Answer Replay, Typing Trigger & Hard Stop</span
+                >
+                <span class="keybind-card__desc"
+                  >Double-Tap: Silence all audio & abort typing. Tap: Replay
+                  audio / re-copy essay. Hold: Slow replay / Auto-typing
+                  toggle.</span
+                >
+                <span class="keybind-card__tut"
+                  >Double-tap: Instant silence | Tap: 1.0x / N-tuts / 1x Tut (Copy) | Hold:
+                  0.75x / Auto-typer</span
+                >
+              </div>
+              <div class="keybind-card__keys">
+                <span class="kbd">R-CTRL</span> +
+                <span class="kbd">R-ALT</span>
+              </div>
+            </div>
+
+            <div class="keybind-card">
+              <div class="keybind-card__info">
+                <span class="keybind-card__action"
+                  >Cycle Reasoning Depth Level</span
+                >
+                <span class="keybind-card__desc"
+                  >Cycles thinking level sequentially: Low &rarr; Medium &rarr;
+                  High &rarr; Low.</span
+                >
+                <span class="keybind-card__tut"
+                  >Earcon: 1x Tut (Low), 2x Tut (Med), 3x Tut (High)</span
+                >
+              </div>
+              <div class="keybind-card__keys">
+                <span class="kbd">R-CTRL</span> +
+                <span class="kbd">&darr; Tap</span>
+              </div>
+            </div>
+
+            <div class="keybind-card">
+              <div class="keybind-card__info">
+                <span class="keybind-card__action"
+                  >Toggle Companion Sub-Mode (Save vs Throw)</span
+                >
+                <span class="keybind-card__desc"
+                  >Switches between Save Mode (persists into chat) and Throw
+                  Mode (stateless volatile RAM).</span
+                >
+                <span class="keybind-card__tut"
+                  >Earcon: 1x Long Tut (Save) | 2x Long Tut (Throw)</span
+                >
+              </div>
+              <div class="keybind-card__keys">
+                <span class="kbd">R-CTRL</span> +
+                <span class="kbd">&darr; Hold 1s</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- GROUP 2: MAIN DESKTOP WORKSPACE -->
+          <div class="keybind-group">
+            <div class="keybind-group__title">
+              <svg class="svg-icon svg-icon--sm" viewBox="0 0 24 24">
+                <rect width="18" height="18" x="3" y="3" rx="2"></rect>
+                <path d="M3 9h18"></path>
+              </svg>
+              <span>Main Desktop Workspace Controls</span>
+            </div>
+
+            <div class="keybind-card">
+              <div class="keybind-card__info">
+                <span class="keybind-card__action">Send Message</span>
+                <span class="keybind-card__desc"
+                  >Submits current prompt and attachments to the selected Gemini
+                  model.</span
+                >
+              </div>
+              <div class="keybind-card__keys">
+                <span class="kbd">Enter</span>
+              </div>
+            </div>
+
+            <div class="keybind-card">
+              <div class="keybind-card__info">
+                <span class="keybind-card__action">New Line in Composer</span>
+                <span class="keybind-card__desc"
+                  >Inserts a newline without submitting the message.</span
+                >
+              </div>
+              <div class="keybind-card__keys">
+                <span class="kbd">Shift</span> + <span class="kbd">Enter</span>
+              </div>
+            </div>
+
+            <div class="keybind-card">
+              <div class="keybind-card__info">
+                <span class="keybind-card__action"
+                  >Paste Image / Screenshot from Clipboard</span
+                >
+                <span class="keybind-card__desc"
+                  >Directly attaches copied screenshot or image files to the
+                  composer.</span
+                >
+              </div>
+              <div class="keybind-card__keys">
+                <span class="kbd">Ctrl</span> + <span class="kbd">V</span>
+              </div>
+            </div>
+
+            <div class="keybind-card">
+              <div class="keybind-card__info">
+                <span class="keybind-card__action"
+                  >Stop Response Generation</span
+                >
+                <span class="keybind-card__desc"
+                  >Aborts in-flight generation when the model is reasoning or
+                  responding.</span
+                >
+              </div>
+              <div class="keybind-card__keys">
+                <span class="kbd">Stop Button (Red)</span>
+              </div>
             </div>
           </div>
         </div>
 
         <div class="modal__footer">
-          <button class="btn btn--primary" id="save-settings-modal-btn">Done</button>
+          <button class="btn btn--primary" id="close-keybinds-done-btn">
+            Got It
+          </button>
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- KEYBOARD SHORTCUTS MODAL -->
-  <div class="modal-backdrop is-hidden" id="keybinds-modal">
-    <div class="modal modal--wide">
-      <div class="modal__header">
-        <div style="display: flex; align-items: center; gap: var(--space-2);">
-          <svg class="svg-icon" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"></rect><path d="M6 8h.01"></path><path d="M10 8h.01"></path><path d="M14 8h.01"></path><path d="M18 8h.01"></path><path d="M8 12h.01"></path><path d="M12 12h.01"></path><path d="M16 12h.01"></path><path d="M7 16h10"></path></svg>
-          <span class="modal__title">Keyboard Shortcuts & Earcon Reference</span>
-        </div>
-        <button class="btn btn--icon btn--ghost btn--sm" id="close-keybinds-modal-btn">
-          <svg class="svg-icon" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
-        </button>
-      </div>
-
-      <div class="modal__body" style="max-height: 70vh; overflow-y: auto;">
-        <!-- GROUP 1: STEALTH COMPANION MODE -->
-        <div class="keybind-group">
-          <div class="keybind-group__title">
-            <svg class="svg-icon svg-icon--sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle><line x1="12" y1="12" x2="18.5" y2="5.5"></line></svg>
-            <span>Stealth Companion Mode (Global Background Controls)</span>
-          </div>
-
-          <div class="keybind-card">
-            <div class="keybind-card__info">
-              <span class="keybind-card__action">Capture Full-Screen Screenshot</span>
-              <span class="keybind-card__desc">Captures top-most screen frame and stages it in volatile RAM buffer.</span>
-              <span class="keybind-card__tut">Earcon: 1x Short Tut (880 Hz)</span>
-            </div>
-            <div class="keybind-card__keys">
-              <span class="kbd">R-CTRL</span> + <span class="kbd">&uarr; Tap</span>
-            </div>
-          </div>
-
-          <div class="keybind-card">
-            <div class="keybind-card__info">
-              <span class="keybind-card__action">Cycle Active Gemini Model</span>
-              <span class="keybind-card__desc">Cycles sequentially: 3.5 Flash Lite &rarr; 3.6 Flash &rarr; 3.8 Flash &rarr; 3.5.</span>
-              <span class="keybind-card__tut">Earcon: 1x Tut (3.5), 2x Tut (3.6), 3x Tut (3.8)</span>
-            </div>
-            <div class="keybind-card__keys">
-              <span class="kbd">R-CTRL</span> + <span class="kbd">&uarr; Hold 400ms</span>
-            </div>
-          </div>
-
-          <div class="keybind-card">
-            <div class="keybind-card__info">
-              <span class="keybind-card__action">Dynamic Blind Region Screenshot</span>
-              <span class="keybind-card__desc">Hold 1s to lock start point, move cursor to opposite corner, release to crop (&ge;30px).</span>
-              <span class="keybind-card__tut">Earcon: 1x Short Tut (start & stop) | 2x Low Tut if &lt;30px</span>
-            </div>
-            <div class="keybind-card__keys">
-              <span class="kbd">L-CTRL</span> + <span class="kbd">L-SHIFT</span> <span style="font-size: 0.72rem; color: var(--color-text-secondary);">(Hold 1s)</span>
-            </div>
-          </div>
-
-          <div class="keybind-card">
-            <div class="keybind-card__info">
-              <span class="keybind-card__action">Push-to-Talk Voice Note & Transcription</span>
-              <span class="keybind-card__desc">Hold both mouse buttons for 1s, speak prompt into mic, release to transcribe. Suppresses right-click menu.</span>
-              <span class="keybind-card__tut">Earcon: 1x Short Tut (start recording) & 1x Short Tut (finish)</span>
-            </div>
-            <div class="keybind-card__keys">
-              <span class="kbd">Left Mouse</span> + <span class="kbd">Right Mouse</span> <span style="font-size: 0.72rem; color: var(--color-text-secondary);">(Hold 1s)</span>
-            </div>
-          </div>
-
-          <div class="keybind-card">
-            <div class="keybind-card__info">
-              <span class="keybind-card__action">Send Staged Screenshots & Voice to AI</span>
-              <span class="keybind-card__desc">Dispatches all staged screenshots and transcribed text to Gemini, reads answer via Neural TTS.</span>
-              <span class="keybind-card__tut">Earcon: 1x Long Tut (350ms, 880 Hz)</span>
-            </div>
-            <div class="keybind-card__keys">
-              <span class="kbd">R-CTRL</span> + <span class="kbd">&rarr;</span>
-            </div>
-          </div>
-
-          <div class="keybind-card">
-            <div class="keybind-card__info">
-              <span class="keybind-card__action">Clear All Staged Captures</span>
-              <span class="keybind-card__desc">Immediately wipes all accumulated screenshot buffers and voice notes from RAM.</span>
-              <span class="keybind-card__tut">Earcon: 2x Low Tut (440 Hz)</span>
-            </div>
-            <div class="keybind-card__keys">
-              <span class="kbd">R-CTRL</span> + <span class="kbd">Delete</span>
-            </div>
-          </div>
-
-          <div class="keybind-card">
-            <div class="keybind-card__info">
-              <span class="keybind-card__action">Replay Last Spoken AI Answer</span>
-              <span class="keybind-card__desc">Replays cached neural speech. Tap for Normal 1.0x speed, or hold for Slow 0.75x speed.</span>
-              <span class="keybind-card__tut">Audio: Spoken TTS playback through chosen sink</span>
-            </div>
-            <div class="keybind-card__keys">
-              <span class="kbd">R-CTRL</span> + <span class="kbd">&larr;</span> <span style="font-size: 0.72rem; color: var(--color-text-secondary);">(Tap: 1.0x / Hold: 0.75x)</span>
-            </div>
-          </div>
-
-          <div class="keybind-card">
-            <div class="keybind-card__info">
-              <span class="keybind-card__action">Cycle Reasoning Depth Level</span>
-              <span class="keybind-card__desc">Cycles thinking level sequentially: Low &rarr; Medium &rarr; High &rarr; Low.</span>
-              <span class="keybind-card__tut">Earcon: 1x Tut (Low), 2x Tut (Med), 3x Tut (High)</span>
-            </div>
-            <div class="keybind-card__keys">
-              <span class="kbd">R-CTRL</span> + <span class="kbd">&darr; Tap</span>
-            </div>
-          </div>
-
-          <div class="keybind-card">
-            <div class="keybind-card__info">
-              <span class="keybind-card__action">Toggle Companion Sub-Mode (Save vs Throw)</span>
-              <span class="keybind-card__desc">Switches between Save Mode (persists into chat) and Throw Mode (stateless volatile RAM).</span>
-              <span class="keybind-card__tut">Earcon: 1x Long Tut (Save) | 2x Long Tut (Throw)</span>
-            </div>
-            <div class="keybind-card__keys">
-              <span class="kbd">R-CTRL</span> + <span class="kbd">&darr; Hold 1s</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- GROUP 2: MAIN DESKTOP WORKSPACE -->
-        <div class="keybind-group">
-          <div class="keybind-group__title">
-            <svg class="svg-icon svg-icon--sm" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M3 9h18"></path></svg>
-            <span>Main Desktop Workspace Controls</span>
-          </div>
-
-          <div class="keybind-card">
-            <div class="keybind-card__info">
-              <span class="keybind-card__action">Send Message</span>
-              <span class="keybind-card__desc">Submits current prompt and attachments to the selected Gemini model.</span>
-            </div>
-            <div class="keybind-card__keys">
-              <span class="kbd">Enter</span>
-            </div>
-          </div>
-
-          <div class="keybind-card">
-            <div class="keybind-card__info">
-              <span class="keybind-card__action">New Line in Composer</span>
-              <span class="keybind-card__desc">Inserts a newline without submitting the message.</span>
-            </div>
-            <div class="keybind-card__keys">
-              <span class="kbd">Shift</span> + <span class="kbd">Enter</span>
-            </div>
-          </div>
-
-          <div class="keybind-card">
-            <div class="keybind-card__info">
-              <span class="keybind-card__action">Paste Image / Screenshot from Clipboard</span>
-              <span class="keybind-card__desc">Directly attaches copied screenshot or image files to the composer.</span>
-            </div>
-            <div class="keybind-card__keys">
-              <span class="kbd">Ctrl</span> + <span class="kbd">V</span>
-            </div>
-          </div>
-
-          <div class="keybind-card">
-            <div class="keybind-card__info">
-              <span class="keybind-card__action">Stop Response Generation</span>
-              <span class="keybind-card__desc">Aborts in-flight generation when the model is reasoning or responding.</span>
-            </div>
-            <div class="keybind-card__keys">
-              <span class="kbd">Stop Button (Red)</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="modal__footer">
-        <button class="btn btn--primary" id="close-keybinds-done-btn">Got It</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Scripts -->
-  <script src="../../node_modules/katex/dist/katex.min.js"></script>
-  <script src="../../node_modules/katex/dist/contrib/auto-render.min.js"></script>
-  <script src="../../node_modules/highlight.js/lib/index.js"></script>
-  <script src="scripts/companion-ui.js"></script>
-  <script src="scripts/settings-ui.js"></script>
-  <script src="scripts/chat-view.js"></script>
-  <script src="scripts/app.js"></script>
-</body>
+    <!-- Scripts -->
+    <script src="../../node_modules/katex/dist/katex.min.js"></script>
+    <script src="../../node_modules/katex/dist/contrib/auto-render.min.js"></script>
+    <script src="../../node_modules/highlight.js/lib/index.js"></script>
+    <script src="scripts/companion-ui.js"></script>
+    <script src="scripts/settings-ui.js"></script>
+    <script src="scripts/chat-view.js"></script>
+    <script src="scripts/app.js"></script>
+  </body>
 </html>

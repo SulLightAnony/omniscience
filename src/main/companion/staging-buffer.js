@@ -44,6 +44,35 @@ class StagingBuffer extends EventEmitter {
   }
 
   /**
+   * Appends a single character from CapsLock keyboard typing.
+   * @param {string} char
+   */
+  appendChar(char) {
+    if (!char) return;
+    this.text += char;
+
+    if (stateMachine.getState() === 'IDLE') {
+      stateMachine.setState('STAGING');
+    }
+    this.emit('changed', this.getSnapshot());
+  }
+
+  /**
+   * Deletes the last character from CapsLock keyboard typing (Backspace).
+   */
+  deleteLastChar() {
+    if (this.text.length > 0) {
+      this.text = this.text.slice(0, -1);
+      if (this.images.length === 0 && this.text.trim().length === 0) {
+        if (stateMachine.getState() === 'STAGING') {
+          stateMachine.setState('IDLE');
+        }
+      }
+      this.emit('changed', this.getSnapshot());
+    }
+  }
+
+  /**
    * Clears all staged screenshots and transcribed text.
    * Plays the 2x Low Tut cancellation tone and resets state to IDLE.
    */

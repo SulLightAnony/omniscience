@@ -10,6 +10,7 @@ const DEFAULT_SETTINGS = {
   companion_sub_mode: 'save',
   reasoning_level: 'low',
   companion_armed: false,
+  output_profile: 'SHORT_ANSWER',
 };
 
 /**
@@ -204,6 +205,36 @@ function setActiveModel(model) {
   setSetting('active_model', String(model || 'gemini-3.8-flash'));
 }
 
+const VALID_OUTPUT_PROFILES = [
+  'SHORT_ANSWER',
+  'MULTIPLE_CHOICE',
+  'ESSAY',
+  'PROGRAMMING',
+  'MATHEMATICS',
+];
+
+/**
+ * Convenience getter for Companion output profile.
+ * @returns {'SHORT_ANSWER'|'MULTIPLE_CHOICE'|'ESSAY'|'PROGRAMMING'|'MATHEMATICS'}
+ */
+function getOutputProfile() {
+  const val = String(getSetting('output_profile', 'SHORT_ANSWER'));
+  return VALID_OUTPUT_PROFILES.includes(val) ? val : 'SHORT_ANSWER';
+}
+
+/**
+ * Convenience setter for Companion output profile.
+ * @param {'SHORT_ANSWER'|'MULTIPLE_CHOICE'|'ESSAY'|'PROGRAMMING'|'MATHEMATICS'} profile
+ * @returns {string}
+ */
+function setOutputProfile(profile) {
+  const valid = VALID_OUTPUT_PROFILES.includes(profile)
+    ? profile
+    : 'SHORT_ANSWER';
+  setSetting('output_profile', valid);
+  return valid;
+}
+
 module.exports = {
   DEFAULT_SETTINGS,
   getSetting,
@@ -220,4 +251,6 @@ module.exports = {
   setAudioDeviceId,
   getVolumes,
   setVolumes,
+  getOutputProfile,
+  setOutputProfile,
 };

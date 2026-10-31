@@ -1,5 +1,24 @@
 const path = require('path');
-const { app, BrowserWindow } = require('electron');
+const electron = require('electron');
+
+// Defensive self-healing: If launched under ELECTRON_RUN_AS_NODE (e.g. VS Code / Antigravity terminal),
+// re-spawn the true Electron binary with the environment variable removed.
+if (typeof electron === 'string') {
+  const { spawn } = require('child_process');
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const child = spawn(electron, process.argv.slice(1), {
+    stdio: 'inherit',
+    env,
+    windowsHide: false,
+  });
+  child.on('close', (code) => {
+    process.exit(code ?? 0);
+  });
+  return;
+}
+
+const { app, BrowserWindow } = electron;
 
 // Ensure Web Audio API and speech synthesis play smoothly in background without user gesture
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -8,11 +27,12 @@ const { initDatabase, closeDb } = require('./database/sqlite-client');
 const { hookManager } = require('./companion/hook-manager');
 const { stateMachine } = require('./companion/state-machine');
 const { registerIpcHandlers } = require('./ipc-handlers');
-const { initTray, destroyTray } = require('./tray-manager');
+const { setupTray, destroyTray } = require('./tray-manager');
 const { ttsEngine } = require('./audio/tts-engine');
 
 let mainWindow = null;
 let isQuitting = false;
+app.isQuitting = false;
 
 // 1. Single Instance Lock Enforcement
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -59,10 +79,11 @@ function createWindow() {
 
   // Intercept close event: hide window and remove from taskbar if Companion Mode is armed
   mainWindow.on('close', (event) => {
-    if (!isQuitting && stateMachine.isCompanionArmed()) {
+    if (!isQuitting && !app.isQuitting && stateMachine.isCompanionArmed()) {
       event.preventDefault();
       mainWindow.setSkipTaskbar(true);
       mainWindow.hide();
+      return false;
     }
   });
 
@@ -83,14 +104,23 @@ app.whenReady().then(async () => {
   // Register IPC communication bridge
   registerIpcHandlers(win, hookManager);
 
-  // Initialize Windows System Tray
-  initTray(win, () => {
-    isQuitting = true;
-    app.quit();
-  });
+  // Initialize Windows System Tray defensively
+  try {
+    setupTray(win, () => {
+      isQuitting = true;
+      app.isQuitting = true;
+      app.quit();
+    });
+  } catch (trayErr) {
+    console.error('Failed to initialize system tray:', trayErr);
+  }
 
   // Start global input hooks
-  hookManager.start();
+  try {
+    hookManager.start();
+  } catch (hookErr) {
+    console.error('Failed to start global input hooks:', hookErr);
+  }
 
   // Warm-up TTS engine
   ttsEngine.warmUp().catch(() => {});
@@ -99,6 +129,7 @@ app.whenReady().then(async () => {
 // App shutdown lifecycle
 app.on('before-quit', () => {
   isQuitting = true;
+  app.isQuitting = true;
   hookManager.stop();
   destroyTray();
   closeDb();
@@ -108,6 +139,7 @@ app.on('window-all-closed', () => {
   // If companion mode is armed, the process stays alive even if window is closed
   if (!stateMachine.isCompanionArmed()) {
     isQuitting = true;
+    app.isQuitting = true;
     app.quit();
   }
 });

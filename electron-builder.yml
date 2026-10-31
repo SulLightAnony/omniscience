@@ -21,4 +21,18 @@ nsis:
 files:
   - "**/*"
   - "!dist/*"
-  - "!native-addons/build/*"
+  - "native-addons/build/Release/*.node"
+  - "!native-addons/build/Release/*.obj"
+  - "!native-addons/build/Release/*.tlog"
+  - "!native-addons/build/Release/*.pdb"
+  - "!native-addons/build/*.vcxproj*"
+  - "!native-addons/build/*.sln"
+
+extraResources:
+  - from: "build/tray-icon.ico"
+    to: "build/tray-icon.ico"
+  - from: "build/icon.ico"
+    to: "build/icon.ico"
+
+asarUnpack:
+  - "**/*.node"

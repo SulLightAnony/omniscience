@@ -144,6 +144,37 @@
   color: var(--color-text-primary);
 }
 
+/* ---------------- COMPANION OUTPUT PROFILE BADGE ---------------- */
+.output-profile-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.35rem 0.75rem;
+  background-color: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  user-select: none;
+}
+
+.output-profile-select {
+  background: transparent;
+  border: none;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  outline: none;
+  cursor: pointer;
+}
+
+.output-profile-select option {
+  background-color: var(--color-bg-surface-elevated);
+  color: var(--color-text-primary);
+}
+
 /* ---------------- THINKING INDICATOR ---------------- */
 .message--thinking .message__bubble {
   display: flex;
@@ -315,6 +346,44 @@
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-secondary);
+}
+
+.checkbox-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background-color: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  user-select: none;
+  transition: all var(--transition-fast);
+}
+
+.checkbox-control:hover {
+  background-color: var(--color-bg-surface-hover);
+  border-color: var(--color-border-default);
+}
+
+.checkbox-control__input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+  margin: 0;
+}
+
+.checkbox-control__label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.companion-popover__hint {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
 }
 
 .companion-popover__radio-group {

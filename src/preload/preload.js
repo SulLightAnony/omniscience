@@ -40,8 +40,11 @@ contextBridge.exposeInMainWorld('omniscienceAPI', {
   setCompanionArmed: (armed) => ipcRenderer.invoke('companion:setArmed', armed),
   setCompanionSubMode: (mode) => ipcRenderer.invoke('companion:setSubMode', mode),
   setReasoningLevel: (level) => ipcRenderer.invoke('companion:setReasoning', level),
+  getOutputProfile: () => ipcRenderer.invoke('companion:getOutputProfile'),
+  setOutputProfile: (profile) => ipcRenderer.invoke('companion:setOutputProfile', profile),
   clearStaging: () => ipcRenderer.invoke('companion:clearStaging'),
   dispatchStaging: () => ipcRenderer.invoke('companion:dispatchStaging'),
+  stopAllAudio: () => ipcRenderer.invoke('audio:stopAll'),
 
   // Subscriptions from Main Process
   onCompanionStatusChanged: (callback) => {
@@ -59,6 +62,11 @@ contextBridge.exposeInMainWorld('omniscienceAPI', {
     ipcRenderer.on('companion:message-added', handler);
     return () => ipcRenderer.removeListener('companion:message-added', handler);
   },
+  onOutputProfileChanged: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('companion:output-profile-changed', handler);
+    return () => ipcRenderer.removeListener('companion:output-profile-changed', handler);
+  },
 
   // Audio Playback Events
   onPlayEarconWav: (callback) => {
@@ -70,6 +78,11 @@ contextBridge.exposeInMainWorld('omniscienceAPI', {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('audio:play-tts-buffer', handler);
     return () => ipcRenderer.removeListener('audio:play-tts-buffer', handler);
+  },
+  onStopAllAudio: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('audio:stop-all', handler);
+    return () => ipcRenderer.removeListener('audio:stop-all', handler);
   },
 
   // Push-to-Talk Voice Recording Bridge

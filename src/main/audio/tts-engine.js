@@ -1,6 +1,7 @@
 const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 const { getVolumes, getAudioDeviceId } = require('../database/repositories/settings-repo');
 const { earconSynth } = require('./earcon-synth');
+const { audioSession } = require('./audio-session');
 
 const ALL_KEYS_EXHAUSTED_MESSAGE = 'All API keys have reached their rate limit. Please wait a moment.';
 const PRIMARY_VOICE = 'en-US-AndrewNeural';
@@ -192,6 +193,8 @@ class TTSEngine {
     }
 
     this.lastAnswerText = cleanText;
+    audioSession.killActiveAudio();
+    const currentGen = audioSession.getGeneration();
 
     try {
       const pool = await this.initPool();
@@ -202,7 +205,7 @@ class TTSEngine {
       // Single short sentence: synthesize in one shot
       if (groups.length <= 1) {
         const buffer = await this.synthesizeChunk(client0, cleanText);
-        if (buffer && buffer.length > 0) {
+        if (audioSession.isCurrent(currentGen) && buffer && buffer.length > 0) {
           this.lastAnswerBuffer = buffer;
           this.dispatchAudio(buffer, rate, true);
         }
@@ -215,7 +218,7 @@ class TTSEngine {
 
       // Chunk 0 Promise
       const chunk0Promise = this.synthesizeChunk(client0, groups[0]).then((buf) => {
-        if (buf && buf.length > 0) {
+        if (audioSession.isCurrent(currentGen) && buf && buf.length > 0) {
           // Immediately dispatch first chunk so narrator begins speaking right away
           this.dispatchAudio(buf, rate, true);
         }
@@ -228,7 +231,7 @@ class TTSEngine {
         const client = i % 2 === 0 ? client0 : client1;
         const groupText = groups[i];
         const nextPromise = this.synthesizeChunk(client, groupText).then((buf) => {
-          if (buf && buf.length > 0) {
+          if (audioSession.isCurrent(currentGen) && buf && buf.length > 0) {
             // Dispatch subsequent chunk to queue seamlessly in renderer Web Audio API
             this.dispatchAudio(buf, rate, false);
           }
@@ -238,6 +241,9 @@ class TTSEngine {
       }
 
       const allBuffers = await Promise.all(chunkPromises);
+      if (!audioSession.isCurrent(currentGen)) {
+        return Buffer.alloc(0);
+      }
       const combinedBuffer = Buffer.concat(allBuffers.filter((b) => b && b.length > 0));
       if (combinedBuffer.length > 0) {
         this.lastAnswerBuffer = combinedBuffer;
@@ -264,6 +270,7 @@ class TTSEngine {
       return false;
     }
 
+    audioSession.killActiveAudio();
     const playbackRate = speed === 0.75 ? 0.75 : 1.0;
     this.dispatchAudio(this.lastAnswerBuffer, playbackRate, true);
     return true;
@@ -273,6 +280,7 @@ class TTSEngine {
    * Plays the pre-synthesized or synthesized "All API keys exhausted" alert.
    */
   async speakRateLimitAlert() {
+    audioSession.killActiveAudio();
     try {
       if (!this.rateLimitFallbackBuffer) {
         const pool = await this.initPool();

@@ -23,6 +23,7 @@ class OmniscienceApp {
     this.attachFileBtn = document.getElementById('attach-file-btn');
     this.attachmentsContainer = document.getElementById('composer-attachments');
     this.modelSelect = document.getElementById('model-select');
+    this.outputProfileSelect = document.getElementById('output-profile-select');
     this.isGenerating = false;
 
     // Keybinds Modal Elements
@@ -52,11 +53,27 @@ class OmniscienceApp {
       }
     } catch (_e) {}
 
+    try {
+      const currentProfile = await window.omniscienceAPI.getOutputProfile();
+      if (this.outputProfileSelect && currentProfile) {
+        this.outputProfileSelect.value = currentProfile;
+      }
+    } catch (_e) {}
+
     // Synchronize UI dropdown when model is changed via global shortcut (R-CTRL + Arrow Up hold)
     if (window.omniscienceAPI && typeof window.omniscienceAPI.onModelChanged === 'function') {
       window.omniscienceAPI.onModelChanged((model) => {
         if (this.modelSelect && model) {
           this.modelSelect.value = model;
+        }
+      });
+    }
+
+    // Synchronize UI dropdown when output profile is changed via global shortcut (R-CTRL + R-SHIFT tap)
+    if (window.omniscienceAPI && typeof window.omniscienceAPI.onOutputProfileChanged === 'function') {
+      window.omniscienceAPI.onOutputProfileChanged((profile) => {
+        if (this.outputProfileSelect && profile) {
+          this.outputProfileSelect.value = profile;
         }
       });
     }
@@ -190,6 +207,13 @@ class OmniscienceApp {
       });
     }
 
+    // Output Profile Selector Change
+    if (this.outputProfileSelect) {
+      this.outputProfileSelect.addEventListener('change', async () => {
+        await window.omniscienceAPI.setOutputProfile(this.outputProfileSelect.value);
+      });
+    }
+
     // File Attachment Dialog
     this.attachFileBtn.addEventListener('click', async () => {
       const filePaths = await window.omniscienceAPI.openFilesDialog();
@@ -242,6 +266,13 @@ class OmniscienceApp {
     window.omniscienceAPI.onPlayTTSBuffer(async ({ buffer, playbackRate, volume, sinkId, isFirstChunk }) => {
       await this.playAudioBuffer(buffer, playbackRate || 1.0, volume || 1.0, sinkId, isFirstChunk !== false);
     });
+
+    // Universal audio stop interruption
+    if (window.omniscienceAPI && typeof window.omniscienceAPI.onStopAllAudio === 'function') {
+      window.omniscienceAPI.onStopAllAudio(() => {
+        this.stopActiveAudioSources();
+      });
+    }
   }
 
   /**

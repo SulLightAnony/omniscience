@@ -1,4 +1,5 @@
 const { getVolumes, getAudioDeviceId } = require('../database/repositories/settings-repo');
+const { audioSession } = require('./audio-session');
 
 const SAMPLE_RATE = 44100;
 
@@ -126,6 +127,7 @@ class EarconSynthesizer {
    * @returns {Buffer}
    */
   play(pattern) {
+    audioSession.killActiveAudio();
     const { earconVolume } = getVolumes();
     const sinkId = getAudioDeviceId();
     let wavBuffer = null;
@@ -260,6 +262,36 @@ class EarconSynthesizer {
 
   playTripleLowTut() {
     return this.play('triple-low');
+  }
+
+  /**
+   * Plays N consecutive 880 Hz tut tones (sine wave) for MCQ answer feedback and replay.
+   * @param {number} count - 1-based option index (1 to N)
+   * @param {Object} [options]
+   * @param {number} [options.durationMs=90] - 90ms for normal, 180ms for slow
+   * @param {number} [options.gapMs=70] - 70ms for normal, 150ms for slow
+   * @returns {Buffer}
+   */
+  playNTuts(count, { durationMs = 90, gapMs = 70 } = {}) {
+    audioSession.killActiveAudio();
+    const n = Math.max(1, Math.min(20, parseInt(count, 10) || 1));
+    const { earconVolume } = getVolumes();
+    const sinkId = getAudioDeviceId();
+
+    const wavBuffer = generateWavBuffer({
+      frequency: 880,
+      waveType: 'sine',
+      durationMs,
+      count: n,
+      gapMs,
+      volume: earconVolume,
+    });
+
+    if (this.playbackDispatcher && wavBuffer) {
+      this.playbackDispatcher(wavBuffer, sinkId);
+    }
+
+    return wavBuffer;
   }
 }
 

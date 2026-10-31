@@ -1,33 +1,61 @@
 const path = require('path');
-const { Tray, Menu, app } = require('electron');
+const fs = require('fs');
+const { Tray, Menu, app, nativeImage } = require('electron');
 const { stateMachine } = require('./companion/state-machine');
 
+// Global module-scoped variable to persist the Tray object and prevent Garbage Collection
 let trayInstance = null;
 
 /**
- * Initializes and manages the Windows System Tray icon and context menu.
+ * Resolves the absolute path to the tray icon with defensive fallbacks.
+ * @returns {string}
+ */
+function resolveTrayIconPath() {
+  const candidates = [
+    path.join(__dirname, '../../build/tray-icon.ico'),
+    path.join(__dirname, 'assets/tray-icon.ico'),
+    path.join(process.resourcesPath || '', 'build/tray-icon.ico'),
+    path.join(process.resourcesPath || '', 'tray-icon.ico'),
+    path.join(__dirname, '../../build/icon.ico'),
+    path.join(__dirname, 'assets/icon.ico'),
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  // Primary reference adhering to build specification
+  return path.join(__dirname, '../../build/tray-icon.ico');
+}
+
+/**
+ * Initializes and manages the Windows System Tray icon and native context menu.
  * @param {import('electron').BrowserWindow} mainWindow
  * @param {Function} [onQuit]
  * @returns {Tray}
  */
-function initTray(mainWindow, onQuit) {
-  if (trayInstance) {
+function setupTray(mainWindow, onQuit) {
+  if (trayInstance && !trayInstance.isDestroyed()) {
     return trayInstance;
   }
 
-  const iconPath = path.join(__dirname, '../../build/tray-icon.ico');
-  trayInstance = new Tray(iconPath);
+  const iconPath = resolveTrayIconPath();
+  const iconImage = nativeImage.createFromPath(iconPath);
+  trayInstance = new Tray(iconImage.isEmpty() ? iconPath : iconImage);
   trayInstance.setToolTip('Omniscience');
 
   const showWindow = () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.setSkipTaskbar(false);
       mainWindow.show();
       mainWindow.focus();
     }
   };
 
-  // Double-click restores main window
+  // Double-click restores and focuses the main window
   trayInstance.on('double-click', () => {
     showWindow();
   });
@@ -42,47 +70,29 @@ function initTray(mainWindow, onQuit) {
       ? `Companion Status: Active (${subModeText})`
       : 'Companion Status: Inactive';
 
-    const reasoningTitle =
-      snapshot.reasoningLevel.charAt(0).toUpperCase() + snapshot.reasoningLevel.slice(1);
+    const reasoningTitle = (snapshot.reasoningLevel || 'low').toUpperCase();
     const reasoningLabel = `Reasoning Level: ${reasoningTitle}`;
 
-    // Pure text, ZERO EMOJIS
+    // Pure text, ZERO EMOJIS adhering to directive specifications
     const contextMenu = Menu.buildFromTemplate([
       {
         label: 'Open Omniscience Workspace',
         click: () => showWindow(),
       },
+      { type: 'separator' },
       {
         label: statusLabel,
         enabled: false,
       },
       {
         label: reasoningLabel,
-        submenu: [
-          {
-            label: 'Low',
-            type: 'radio',
-            checked: snapshot.reasoningLevel === 'low',
-            click: () => stateMachine.setReasoningLevel('low'),
-          },
-          {
-            label: 'Medium',
-            type: 'radio',
-            checked: snapshot.reasoningLevel === 'medium',
-            click: () => stateMachine.setReasoningLevel('medium'),
-          },
-          {
-            label: 'High',
-            type: 'radio',
-            checked: snapshot.reasoningLevel === 'high',
-            click: () => stateMachine.setReasoningLevel('high'),
-          },
-        ],
+        enabled: false,
       },
       { type: 'separator' },
       {
         label: 'Quit Omniscience Completely',
         click: () => {
+          app.isQuitting = true;
           if (typeof onQuit === 'function') {
             onQuit();
           } else {
@@ -109,12 +119,17 @@ function initTray(mainWindow, onQuit) {
  */
 function destroyTray() {
   if (trayInstance && !trayInstance.isDestroyed()) {
-    trayInstance.destroy();
+    try {
+      trayInstance.destroy();
+    } catch (_err) {
+      // Ignored
+    }
     trayInstance = null;
   }
 }
 
 module.exports = {
-  initTray,
+  setupTray,
+  initTray: setupTray, // Backward-compatibility alias
   destroyTray,
 };

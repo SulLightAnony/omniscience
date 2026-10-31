@@ -24,6 +24,8 @@ const { stateMachine } = require('./companion/state-machine');
 const { stagingBuffer } = require('./companion/staging-buffer');
 const { earconSynth } = require('./audio/earcon-synth');
 const { ttsEngine } = require('./audio/tts-engine');
+const { audioSession } = require('./audio/audio-session');
+const { autoTyper } = require('./companion/auto-typer');
 
 let activeVoiceResolver = null;
 
@@ -53,6 +55,20 @@ function registerIpcHandlers(mainWindow, hookManager) {
         sinkId,
         isFirstChunk,
       });
+    }
+  });
+
+  // Bind Universal Audio Stop Dispatcher to Renderer Web Audio API
+  audioSession.setStopDispatcher(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('audio:stop-all');
+    }
+  });
+
+  // Bind Companion Output Profile Change Dispatcher
+  hookManager.setOutputProfileChangeDispatcher((newProfile) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('companion:output-profile-changed', newProfile);
     }
   });
 
@@ -234,12 +250,27 @@ function registerIpcHandlers(mainWindow, hookManager) {
     return true;
   });
 
+  ipcMain.handle('audio:stopAll', async () => {
+    audioSession.killActiveAudio();
+    autoTyper.abort();
+    return true;
+  });
+
   // ---------------- COMPANION STATE ----------------
   ipcMain.handle('companion:status', async () => {
     return {
       ...stateMachine.getSnapshot(),
       staging: stagingBuffer.getSnapshot(),
     };
+  });
+
+  ipcMain.handle('companion:getOutputProfile', async () => {
+    return stateMachine.getOutputProfile();
+  });
+
+  ipcMain.handle('companion:setOutputProfile', async (_e, profile) => {
+    stateMachine.setOutputProfile(profile);
+    return stateMachine.getSnapshot();
   });
 
   ipcMain.handle('companion:setArmed', async (_e, armed) => {
