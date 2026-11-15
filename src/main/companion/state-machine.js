@@ -106,20 +106,17 @@ class CompanionStateMachine extends EventEmitter {
       return false;
     }
 
-    switch (this.reasoningLevel) {
-      case 'low':
-        this.reasoningLevel = 'medium';
-        earconSynth.playDoubleShortTut(); // 2x Rapid Short Tut
-        break;
-      case 'medium':
-        this.reasoningLevel = 'high';
-        earconSynth.playTripleShortTut(); // 3x Rapid Short Tut
-        break;
-      case 'high':
-      default:
-        this.reasoningLevel = 'low';
-        earconSynth.playShortTut(); // 1x Short Tut
-        break;
+    const LEVELS = ['low', 'medium', 'high'];
+    const currentIndex = LEVELS.indexOf(this.reasoningLevel);
+    const nextIndex = ((currentIndex === -1 ? 0 : currentIndex) + 1) % LEVELS.length;
+    this.reasoningLevel = LEVELS[nextIndex];
+
+    if (this.reasoningLevel === 'low') {
+      earconSynth.playShortTut(); // 1x Short Tut
+    } else if (this.reasoningLevel === 'medium') {
+      earconSynth.playDoubleShortTut(); // 2x Rapid Short Tut
+    } else {
+      earconSynth.playTripleShortTut(); // 3x Rapid Short Tut
     }
 
     setSetting('reasoning_level', this.reasoningLevel);

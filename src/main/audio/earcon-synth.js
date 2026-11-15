@@ -1,7 +1,31 @@
+const path = require('path');
 const { getVolumes, getAudioDeviceId } = require('../database/repositories/settings-repo');
 const { audioSession } = require('./audio-session');
 
 const SAMPLE_RATE = 44100;
+
+let mouseSuppressor = null;
+try {
+  mouseSuppressor = require(path.join(__dirname, '../../../native-addons/build/Release/mouse_suppressor.node'));
+} catch (_errRelease) {
+  try {
+    mouseSuppressor = require(path.join(__dirname, '../../../native-addons/build/Debug/mouse_suppressor.node'));
+  } catch (_errDebug) {
+    mouseSuppressor = null;
+  }
+}
+
+const PATTERN_SPECS = {
+  short: { frequency: 880, waveType: 'sine', durationMs: 90, count: 1, gapMs: 0 },
+  'short-tut': { frequency: 880, waveType: 'sine', durationMs: 90, count: 1, gapMs: 0 },
+  long: { frequency: 880, waveType: 'sine', durationMs: 350, count: 1, gapMs: 0 },
+  'long-tut': { frequency: 880, waveType: 'sine', durationMs: 350, count: 1, gapMs: 0 },
+  'double-short': { frequency: 880, waveType: 'sine', durationMs: 90, count: 2, gapMs: 70 },
+  'triple-short': { frequency: 880, waveType: 'sine', durationMs: 90, count: 3, gapMs: 70 },
+  'double-long': { frequency: 880, waveType: 'sine', durationMs: 350, count: 2, gapMs: 70 },
+  'double-low': { frequency: 440, waveType: 'triangle', durationMs: 110, count: 2, gapMs: 70 },
+  'triple-low': { frequency: 440, waveType: 'triangle', durationMs: 110, count: 3, gapMs: 70 },
+};
 
 /**
  * Creates a 44-byte RIFF WAV header for 16-bit mono PCM.
@@ -111,6 +135,13 @@ function generateWavBuffer({
 class EarconSynthesizer {
   constructor() {
     this.playbackDispatcher = null;
+    this.activePlaybackToken = 0;
+    this.activeTimers = new Set();
+
+    // Ensure interrupting TTS or hard-stop immediately cancels any active earcon cursor pulse sequence
+    audioSession.onStop(() => {
+      this.cancelActiveEarcon();
+    });
   }
 
   /**
@@ -122,6 +153,108 @@ class EarconSynthesizer {
   }
 
   /**
+   * Safely sets or restores the Win32 busy cursor via the native C++ addon.
+   * @param {boolean} busy
+   */
+  _setCursorBusy(busy) {
+    try {
+      if (mouseSuppressor && typeof mouseSuppressor.setBusyCursor === 'function') {
+        mouseSuppressor.setBusyCursor(Boolean(busy));
+      }
+    } catch (_err) {
+      // Ignored: never block audio synthesis if cursor API fails
+    }
+  }
+
+  /**
+   * Cancels any active earcon cursor pulse timers and restores the default OS cursor.
+   */
+  cancelActiveEarcon() {
+    this.activePlaybackToken++;
+    for (const timer of this.activeTimers) {
+      clearTimeout(timer);
+    }
+    this.activeTimers.clear();
+    this._setCursorBusy(false);
+  }
+
+  /**
+   * Schedules system busy-cursor pulses synchronized with tone ON durations and OFF silence gaps.
+   * @param {number} token
+   * @param {number} count
+   * @param {number} durationMs
+   * @param {number} gapMs
+   */
+  _scheduleCursorPulses(token, count, durationMs, gapMs) {
+    const safeCount = Math.max(1, count);
+    let offsetMs = 0;
+
+    const scheduleAt = (delayMs, busyState) => {
+      if (delayMs <= 0) {
+        if (token === this.activePlaybackToken) {
+          this._setCursorBusy(busyState);
+        }
+        return;
+      }
+      const timer = setTimeout(() => {
+        this.activeTimers.delete(timer);
+        if (token !== this.activePlaybackToken) {
+          return;
+        }
+        this._setCursorBusy(busyState);
+      }, delayMs);
+      if (typeof timer.unref === 'function') {
+        timer.unref();
+      }
+      this.activeTimers.add(timer);
+    };
+
+    for (let i = 0; i < safeCount; i++) {
+      scheduleAt(offsetMs, true);
+      offsetMs += durationMs;
+      scheduleAt(offsetMs, false);
+      if (i < safeCount - 1) {
+        offsetMs += gapMs;
+      }
+    }
+  }
+
+  /**
+   * Synthesizes WAV buffer, dispatches playback, and synchronizes OS cursor pulsing.
+   * @param {{ frequency: number, waveType: 'sine'|'triangle', durationMs: number, count: number, gapMs: number }} spec
+   * @param {number} volume
+   * @param {string|null} sinkId
+   * @returns {Buffer}
+   */
+  _dispatchEarcon(spec, volume, sinkId) {
+    const wavBuffer = generateWavBuffer({
+      frequency: spec.frequency,
+      waveType: spec.waveType,
+      durationMs: spec.durationMs,
+      count: spec.count,
+      gapMs: spec.gapMs,
+      volume,
+    });
+
+    const token = ++this.activePlaybackToken;
+
+    if (this.playbackDispatcher && wavBuffer) {
+      let dispatched = false;
+      try {
+        this._scheduleCursorPulses(token, spec.count, spec.durationMs, spec.gapMs);
+        this.playbackDispatcher(wavBuffer, sinkId);
+        dispatched = true;
+      } finally {
+        if (!dispatched) {
+          this.cancelActiveEarcon();
+        }
+      }
+    }
+
+    return wavBuffer;
+  }
+
+  /**
    * Plays a synthesized earcon by name/pattern.
    * @param {string} pattern
    * @returns {Buffer}
@@ -130,109 +263,8 @@ class EarconSynthesizer {
     audioSession.killActiveAudio();
     const { earconVolume } = getVolumes();
     const sinkId = getAudioDeviceId();
-    let wavBuffer = null;
-
-    switch (pattern) {
-      case 'short':
-      case 'short-tut':
-        // 1x Short Tut: 880 Hz Sine, 90ms
-        wavBuffer = generateWavBuffer({
-          frequency: 880,
-          waveType: 'sine',
-          durationMs: 90,
-          count: 1,
-          volume: earconVolume,
-        });
-        break;
-
-      case 'long':
-      case 'long-tut':
-        // 1x Long Tut: 880 Hz Sine, 350ms
-        wavBuffer = generateWavBuffer({
-          frequency: 880,
-          waveType: 'sine',
-          durationMs: 350,
-          count: 1,
-          volume: earconVolume,
-        });
-        break;
-
-      case 'double-short':
-        // 2x Rapid Short Tut: 880 Hz Sine, 90ms, 70ms gap (Reasoning: Medium)
-        wavBuffer = generateWavBuffer({
-          frequency: 880,
-          waveType: 'sine',
-          durationMs: 90,
-          count: 2,
-          gapMs: 70,
-          volume: earconVolume,
-        });
-        break;
-
-      case 'triple-short':
-        // 3x Rapid Short Tut: 880 Hz Sine, 90ms, 70ms gaps (Reasoning: High)
-        wavBuffer = generateWavBuffer({
-          frequency: 880,
-          waveType: 'sine',
-          durationMs: 90,
-          count: 3,
-          gapMs: 70,
-          volume: earconVolume,
-        });
-        break;
-
-      case 'double-long':
-        // 2x Long Tut: 880 Hz Sine, 350ms, 70ms gap (Toggle to Throw Mode)
-        wavBuffer = generateWavBuffer({
-          frequency: 880,
-          waveType: 'sine',
-          durationMs: 350,
-          count: 2,
-          gapMs: 70,
-          volume: earconVolume,
-        });
-        break;
-
-      case 'double-low':
-        // 2x Low Tut: 440 Hz Triangle, 110ms, 70ms gap (Clear/Discard)
-        wavBuffer = generateWavBuffer({
-          frequency: 440,
-          waveType: 'triangle',
-          durationMs: 110,
-          count: 2,
-          gapMs: 70,
-          volume: earconVolume,
-        });
-        break;
-
-      case 'triple-low':
-        // 3x Low Tut: 440 Hz Triangle, 110ms, 70ms gap (All Keys Exhausted / Critical Error)
-        wavBuffer = generateWavBuffer({
-          frequency: 440,
-          waveType: 'triangle',
-          durationMs: 110,
-          count: 3,
-          gapMs: 70,
-          volume: earconVolume,
-        });
-        break;
-
-      default:
-        wavBuffer = generateWavBuffer({
-          frequency: 880,
-          waveType: 'sine',
-          durationMs: 90,
-          count: 1,
-          volume: earconVolume,
-        });
-        break;
-    }
-
-    if (this.playbackDispatcher && wavBuffer) {
-      this.playbackDispatcher(wavBuffer, sinkId);
-    }
-
-    return wavBuffer;
+    const spec = PATTERN_SPECS[pattern] || PATTERN_SPECS.short;
+    return this._dispatchEarcon(spec, earconVolume, sinkId);
   }
 
   // Convenience helper methods corresponding to design.md specification
@@ -278,20 +310,17 @@ class EarconSynthesizer {
     const { earconVolume } = getVolumes();
     const sinkId = getAudioDeviceId();
 
-    const wavBuffer = generateWavBuffer({
-      frequency: 880,
-      waveType: 'sine',
-      durationMs,
-      count: n,
-      gapMs,
-      volume: earconVolume,
-    });
-
-    if (this.playbackDispatcher && wavBuffer) {
-      this.playbackDispatcher(wavBuffer, sinkId);
-    }
-
-    return wavBuffer;
+    return this._dispatchEarcon(
+      {
+        frequency: 880,
+        waveType: 'sine',
+        durationMs,
+        count: n,
+        gapMs,
+      },
+      earconVolume,
+      sinkId
+    );
   }
 }
 

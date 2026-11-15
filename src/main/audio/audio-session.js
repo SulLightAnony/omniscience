@@ -7,6 +7,7 @@ class AudioPlaybackSession {
   constructor() {
     this.generation = 0;
     this.stopDispatcher = null;
+    this.stopListeners = new Set();
   }
 
   /**
@@ -18,11 +19,33 @@ class AudioPlaybackSession {
   }
 
   /**
+   * Registers an additional listener invoked whenever active audio is killed.
+   * @param {Function} listener
+   * @returns {Function} Unsubscribe callback
+   */
+  onStop(listener) {
+    if (typeof listener !== 'function') {
+      return () => {};
+    }
+    this.stopListeners.add(listener);
+    return () => {
+      this.stopListeners.delete(listener);
+    };
+  }
+
+  /**
    * Immediately terminates active audio playback (TTS or Tut earcon sequences).
    * Increments session generation so background streaming chunks are discarded.
    */
   killActiveAudio() {
     this.generation++;
+    for (const listener of this.stopListeners) {
+      try {
+        listener();
+      } catch (_err) {
+        // Ignored
+      }
+    }
     if (this.stopDispatcher) {
       try {
         this.stopDispatcher();

@@ -3,6 +3,7 @@
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
+#define OEMRESOURCE
 #include <windows.h>
 #include <atomic>
 #include <thread>
@@ -14,12 +15,21 @@
 #define WDA_EXCLUDEFROMCAPTURE 0x00000011
 #endif
 
+#ifndef OCR_NORMAL
+#define OCR_NORMAL 32512
+#endif
+
+#ifndef OCR_IBEAM
+#define OCR_IBEAM 32513
+#endif
+
 namespace {
 
 std::atomic<bool> g_suppress_next_rbuttonup(false);
 std::atomic<bool> g_hook_installed(false);
 std::atomic<bool> g_thread_running(false);
 std::atomic<bool> g_is_synthesizing_input(false);
+std::atomic<bool> g_busy_cursor_active(false);
 
 HHOOK g_hook = nullptr;
 DWORD g_hook_thread_id = 0;
@@ -160,20 +170,23 @@ void InputMonitoringThreadFunction() {
     bool region_hold_triggered = false;
     clock::time_point region_down_time;
 
-    // R-CTRL + R-ALT tracking
+    // R-ALT + R-CTRL tracking (strict right-side modifiers, AltGr-safe)
     bool ralt_combo_was_down = false;
     bool ralt_hold_triggered = false;
-    bool ralt_double_tap_detected = false;
-    clock::time_point ralt_down_time;
-    clock::time_point last_ralt_down_time = clock::time_point::min();
-    clock::time_point last_ralt_up_time = clock::time_point::min();
-    bool ralt_tap_pending = false;
-    clock::time_point ralt_tap_schedule_time;
+    clock::time_point ralt_down_time = clock::time_point::min();
+    clock::time_point last_ralt_release_time = clock::time_point::min();
+    clock::time_point last_ralt_hold_time = clock::time_point::min();
 
     // Push-to-Talk voice tracking (Mouse Left + Mouse Right)
     bool voice_combo_was_down = false;
     bool voice_recording_active = false;
     clock::time_point voice_down_time;
+
+    // Cooldown timestamps for strict 250ms debounce on cycling hotkeys
+    const auto debounce_cooldown = std::chrono::milliseconds(250);
+    clock::time_point last_profile_cycle_time = clock::time_point::min();
+    clock::time_point last_reasoning_cycle_time = clock::time_point::min();
+    clock::time_point last_model_cycle_time = clock::time_point::min();
 
     while (g_input_thread_running.load()) {
         auto now = clock::now();
@@ -184,6 +197,8 @@ void InputMonitoringThreadFunction() {
         bool isRShift = (GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0;
         bool isLShift = (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0;
         bool isRAlt = (GetAsyncKeyState(VK_RMENU) & 0x8000) != 0;
+        // AltGr safeguard: Windows emits synthetic VK_LCONTROL when physical R-ALT is pressed on AltGr layouts
+        bool isRealLCtrl = isLCtrl && !isRAlt;
 
         bool isKeyUp = (GetAsyncKeyState(VK_UP) & 0x8000) != 0;
         bool isKeyDown = (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;
@@ -197,12 +212,15 @@ void InputMonitoringThreadFunction() {
         if (!g_is_synthesizing_input.load()) {
 
             // --- HOTKEY 0: Cycle Output Profile: R-CTRL + R-SHIFT (Tap) ---
-            if (isRCtrl && isRShift) {
-                if (!rctrl_rshift_latched) {
-                    rctrl_rshift_latched = true;
+            bool isProfileCombo = (isRCtrl && isRShift);
+            if (isProfileCombo && !rctrl_rshift_latched) {
+                rctrl_rshift_latched = true;
+                if (last_profile_cycle_time == clock::time_point::min() ||
+                    (now - last_profile_cycle_time) >= debounce_cooldown) {
+                    last_profile_cycle_time = now;
                     DispatchNativeEvent("cycle-profile");
                 }
-            } else {
+            } else if (!isProfileCombo) {
                 rctrl_rshift_latched = false;
             }
 
@@ -216,7 +234,11 @@ void InputMonitoringThreadFunction() {
                     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - arrow_up_down_time).count();
                     if (elapsed >= 400) {
                         arrow_up_hold_triggered = true;
-                        DispatchNativeEvent("cycle-model");
+                        if (last_model_cycle_time == clock::time_point::min() ||
+                            (now - last_model_cycle_time) >= debounce_cooldown) {
+                            last_model_cycle_time = now;
+                            DispatchNativeEvent("cycle-model");
+                        }
                     }
                 }
             } else if (arrow_up_was_down) {
@@ -231,8 +253,8 @@ void InputMonitoringThreadFunction() {
                 arrow_up_hold_triggered = false;
             }
 
-            // --- HOTKEY 2: Dynamic Region Capture: L-CTRL + L-SHIFT (strictly without R-CTRL) ---
-            if (isLCtrl && isLShift && !isRCtrl) {
+            // --- HOTKEY 2: Dynamic Region Capture: L-CTRL + L-SHIFT (strictly without R-CTRL or AltGr R-ALT) ---
+            if (isRealLCtrl && isLShift && !isRCtrl && !isRAlt) {
                 if (!region_combo_was_down) {
                     region_combo_was_down = true;
                     region_hold_triggered = false;
@@ -276,54 +298,36 @@ void InputMonitoringThreadFunction() {
                 rctrl_delete_latched = false;
             }
 
-            // --- HOTKEY 5: Answer Replay, Auto-Typer & Hard Stop: R-CTRL + R-ALT ---
-            bool isRAltCombo = (isRCtrl && isRAlt);
+            // --- HOTKEY 5: Answer Replay, Resumable Auto-Typer & Hard Stop: R-ALT + R-CTRL ---
+            bool isRAltCombo = (isRAlt && isRCtrl);
             if (isRAltCombo) {
                 if (!ralt_combo_was_down) {
-                    ralt_combo_was_down = true;
-
-                    // Double-tap detection (< 300ms from last press or release)
-                    auto msSinceLastDown = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_ralt_down_time).count();
-                    auto msSinceLastUp = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_ralt_up_time).count();
-
-                    if (msSinceLastDown < 300 || msSinceLastUp < 300) {
-                        ralt_double_tap_detected = true;
-                        ralt_tap_pending = false; // Cancel pending single tap
-                        DispatchNativeEvent("r-alt-double-tap");
-                    } else {
-                        ralt_double_tap_detected = false;
+                    bool bounceSafe = (last_ralt_release_time == clock::time_point::min() ||
+                        std::chrono::duration_cast<std::chrono::milliseconds>(now - last_ralt_release_time).count() >= 40);
+                    if (bounceSafe) {
+                        ralt_combo_was_down = true;
                         ralt_hold_triggered = false;
                         ralt_down_time = now;
+                        DispatchNativeEvent("r-alt-down");
                     }
-                    last_ralt_down_time = now;
-                } else if (!ralt_double_tap_detected && !ralt_hold_triggered) {
+                } else if (!ralt_hold_triggered) {
                     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - ralt_down_time).count();
                     if (elapsed >= 500) {
                         ralt_hold_triggered = true;
-                        ralt_tap_pending = false;
-                        DispatchNativeEvent("r-alt-hold");
+                        if (last_ralt_hold_time == clock::time_point::min() ||
+                            (now - last_ralt_hold_time) >= debounce_cooldown) {
+                            last_ralt_hold_time = now;
+                            DispatchNativeEvent("r-alt-hold");
+                        }
                     }
                 }
             } else if (ralt_combo_was_down) {
                 ralt_combo_was_down = false;
-                last_ralt_up_time = now;
-
-                if (!ralt_double_tap_detected && !ralt_hold_triggered) {
-                    // Arm 220ms pending single-tap to allow double-tap window
-                    ralt_tap_pending = true;
-                    ralt_tap_schedule_time = now;
-                }
-                ralt_double_tap_detected = false;
-                ralt_hold_triggered = false;
-            }
-
-            // Execute pending single-tap after debounce window
-            if (ralt_tap_pending) {
-                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - ralt_tap_schedule_time).count();
-                if (elapsed >= 220) {
-                    ralt_tap_pending = false;
+                last_ralt_release_time = now;
+                if (!ralt_hold_triggered) {
                     DispatchNativeEvent("r-alt-tap");
                 }
+                ralt_hold_triggered = false;
             }
 
             // --- HOTKEY 6: Reasoning / Mode Toggle: R-CTRL + Arrow Down ---
@@ -344,7 +348,11 @@ void InputMonitoringThreadFunction() {
                 if (!arrow_down_hold_triggered) {
                     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - arrow_down_down_time).count();
                     if (elapsed < 400) {
-                        DispatchNativeEvent("cycle-reasoning");
+                        if (last_reasoning_cycle_time == clock::time_point::min() ||
+                            (now - last_reasoning_cycle_time) >= debounce_cooldown) {
+                            last_reasoning_cycle_time = now;
+                            DispatchNativeEvent("cycle-reasoning");
+                        }
                     }
                 }
                 arrow_down_hold_triggered = false;
@@ -416,6 +424,10 @@ void DoSendUnicodeChar(wchar_t wch) {
     if (wch == L'\r') {
         return;
     }
+    if (wch == L'\t') {
+        DoSendVirtualKey(VK_TAB);
+        return;
+    }
 
     INPUT inputs[2] = {};
     inputs[0].type = INPUT_KEYBOARD;
@@ -429,6 +441,48 @@ void DoSendUnicodeChar(wchar_t wch) {
     inputs[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
 
     SendInput(2, inputs, sizeof(INPUT));
+}
+
+void DoReleaseModifiers() {
+    const WORD modifiers[] = {
+        VK_RCONTROL, VK_LCONTROL,
+        VK_RSHIFT,   VK_LSHIFT,
+        VK_RMENU,    VK_LMENU
+    };
+    INPUT inputs[6] = {};
+    for (int i = 0; i < 6; ++i) {
+        inputs[i].type = INPUT_KEYBOARD;
+        inputs[i].ki.wVk = modifiers[i];
+        inputs[i].ki.dwFlags = KEYEVENTF_KEYUP;
+    }
+    g_is_synthesizing_input.store(true);
+    SendInput(6, inputs, sizeof(INPUT));
+    g_is_synthesizing_input.store(false);
+}
+
+bool SetBusyCursorState(bool busy) {
+    if (busy) {
+        HCURSOR waitCursor = LoadCursor(nullptr, IDC_WAIT);
+        if (!waitCursor) {
+            return false;
+        }
+        HCURSOR copyNormal = CopyIcon(waitCursor);
+        HCURSOR copyIBeam = CopyIcon(waitCursor);
+        bool ok1 = copyNormal ? (SetSystemCursor(copyNormal, OCR_NORMAL) != FALSE) : false;
+        if (!ok1 && copyNormal) {
+            DestroyCursor(copyNormal);
+        }
+        bool ok2 = copyIBeam ? (SetSystemCursor(copyIBeam, OCR_IBEAM) != FALSE) : false;
+        if (!ok2 && copyIBeam) {
+            DestroyCursor(copyIBeam);
+        }
+        g_busy_cursor_active.store(ok1 || ok2);
+        return ok1 || ok2;
+    }
+
+    BOOL restored = SystemParametersInfo(SPI_SETCURSORS, 0, nullptr, 0);
+    g_busy_cursor_active.store(false);
+    return restored != FALSE;
 }
 
 } // namespace
@@ -621,6 +675,39 @@ Napi::Value IsSynthesizingInput(const Napi::CallbackInfo& info) {
 #endif
 }
 
+Napi::Value ReleaseModifiers(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+#ifdef _WIN32
+    DoReleaseModifiers();
+    return Napi::Boolean::New(env, true);
+#else
+    return Napi::Boolean::New(env, false);
+#endif
+}
+
+Napi::Value SetBusyCursor(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+#ifdef _WIN32
+    bool busy = false;
+    if (info.Length() >= 1 && info[0].IsBoolean()) {
+        busy = info[0].As<Napi::Boolean>().Value();
+    }
+    bool ok = SetBusyCursorState(busy);
+    return Napi::Boolean::New(env, ok);
+#else
+    return Napi::Boolean::New(env, false);
+#endif
+}
+
+Napi::Value IsHardwareRAltDown(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+#ifdef _WIN32
+    return Napi::Boolean::New(env, (GetAsyncKeyState(VK_RMENU) & 0x8000) != 0);
+#else
+    return Napi::Boolean::New(env, false);
+#endif
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set(Napi::String::New(env, "enableSuppression"), Napi::Function::New(env, EnableSuppression));
     exports.Set(Napi::String::New(env, "disableSuppression"), Napi::Function::New(env, DisableSuppression));
@@ -631,6 +718,9 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set(Napi::String::New(env, "sendUnicodeString"), Napi::Function::New(env, SendUnicodeString));
     exports.Set(Napi::String::New(env, "sendBackspace"), Napi::Function::New(env, SendBackspace));
     exports.Set(Napi::String::New(env, "isSynthesizingInput"), Napi::Function::New(env, IsSynthesizingInput));
+    exports.Set(Napi::String::New(env, "releaseModifiers"), Napi::Function::New(env, ReleaseModifiers));
+    exports.Set(Napi::String::New(env, "setBusyCursor"), Napi::Function::New(env, SetBusyCursor));
+    exports.Set(Napi::String::New(env, "isHardwareRAltDown"), Napi::Function::New(env, IsHardwareRAltDown));
     exports.Set(Napi::String::New(env, "startInputListener"), Napi::Function::New(env, StartInputListener));
     exports.Set(Napi::String::New(env, "stopInputListener"), Napi::Function::New(env, StopInputListener));
     exports.Set(Napi::String::New(env, "setWindowExcludeFromCapture"), Napi::Function::New(env, SetWindowExcludeFromCapture));
@@ -639,8 +729,11 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     // Auto-install suppression hook on module load
     StartHook();
 
-    // Register cleanup hook so background threads join cleanly on process exit
+    // Register cleanup hook so background threads join cleanly and system cursor restores on process exit
     napi_add_env_cleanup_hook(env, [](void*) {
+        if (g_busy_cursor_active.load()) {
+            SetBusyCursorState(false);
+        }
         if (g_input_thread_running.load()) {
             g_input_thread_running.store(false);
             if (g_input_thread.joinable()) {

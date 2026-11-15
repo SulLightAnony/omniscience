@@ -14,6 +14,7 @@ try {
       sendUnicodeString: () => false,
       sendBackspace: () => false,
       isSynthesizingInput: () => false,
+      releaseModifiers: () => false,
     };
   }
 }
@@ -60,18 +61,49 @@ const QWERTY_ADJACENT = {
   '0': ['9', 'p', 'o'],
 };
 
+class AbortTypingSignal extends Error {
+  constructor() {
+    super('Auto-typing aborted');
+    this.name = 'AbortTypingSignal';
+  }
+}
+
 class AutoTyper {
   constructor() {
-    this.isActive = false;
-    this.isSuspended = false;
-    this.isInjecting = false;
-    this.cancelRequested = false;
-
-    this.currentText = '';
+    this.state = 'IDLE'; // 'IDLE' | 'RUNNING' | 'PAUSED'
+    this.fullText = '';
     this.currentIndex = 0;
+    this.isManuallyPaused = false;
+    this.isUserTypingPaused = false;
+    this.isInjecting = false;
+    this.pendingTypo = null;
 
+    this.runGeneration = 0;
     this.inactivityTimer = null;
-    this.suspendResolve = null;
+  }
+
+  /**
+   * Returns current auto-typer state ('IDLE' | 'RUNNING' | 'PAUSED').
+   * @returns {'IDLE'|'RUNNING'|'PAUSED'}
+   */
+  getState() {
+    return this.state;
+  }
+
+  /**
+   * Backward-compatible indicator for whether auto-typer is RUNNING or PAUSED.
+   * @returns {boolean}
+   */
+  get isActive() {
+    return this.state === 'RUNNING' || this.state === 'PAUSED';
+  }
+
+  /**
+   * Backward-compatible alias for fullText.
+   * @returns {string}
+   */
+  get currentText() {
+    return this.fullText;
   }
 
   /**
@@ -90,12 +122,27 @@ class AutoTyper {
   }
 
   /**
-   * Starts or resumes human-like auto-typing simulation from character index 0.
+   * Dispatches Win32 KEYEVENTF_KEYUP for all modifier keys and waits delayMs before typing.
+   * @param {number} [delayMs=60]
+   * @param {number} [gen=this.runGeneration]
+   */
+  async _flushModifiersAndSettle(delayMs = 60, gen = this.runGeneration) {
+    if (mouseSuppressor && typeof mouseSuppressor.releaseModifiers === 'function') {
+      mouseSuppressor.releaseModifiers();
+    }
+    await new Promise((r) => setTimeout(r, delayMs));
+    if (this.state === 'IDLE' || gen !== this.runGeneration) {
+      throw new AbortTypingSignal();
+    }
+  }
+
+  /**
+   * Starts human-like auto-typing simulation from character index 0.
    * @param {string} text
    * @returns {Promise<boolean>}
    */
   async start(text) {
-    if (this.isActive) {
+    if (this.state !== 'IDLE') {
       return false;
     }
 
@@ -111,49 +158,99 @@ class AutoTyper {
       return false;
     }
 
-    this.isActive = true;
-    this.isSuspended = false;
-    this.cancelRequested = false;
+    const gen = ++this.runGeneration;
+    this.state = 'RUNNING';
+    this.fullText = cleanText;
     this.currentIndex = 0;
-    this.currentText = cleanText;
+    this.isManuallyPaused = false;
+    this.isUserTypingPaused = false;
+    this.pendingTypo = null;
 
     // Auditory feedback: 1x Long Tut (880 Hz, 350ms) on start typing
     earconSynth.playLongTut();
 
     // Run typing cadence loop asynchronously
-    this._runLoop().catch((_err) => {
-      this.abort();
+    this._runLoop(gen).catch((err) => {
+      if (!(err instanceof AbortTypingSignal) && this.runGeneration === gen) {
+        this.abort();
+      }
     });
 
     return true;
   }
 
   /**
-   * Immediately aborts and silences any active auto-typing operation without playing error tones.
+   * Immediately pauses execution at the exact currentIndex without losing progress.
+   * @returns {boolean}
+   */
+  pause() {
+    if (this.state !== 'RUNNING') {
+      return false;
+    }
+    this.state = 'PAUSED';
+    this.isManuallyPaused = true;
+    return true;
+  }
+
+  /**
+   * Resumes execution from PAUSED state after releasing modifier keys and waiting 60ms.
+   * @returns {Promise<boolean>}
+   */
+  async resume() {
+    if (this.state !== 'PAUSED') {
+      return false;
+    }
+
+    const gen = this.runGeneration;
+    if (this.inactivityTimer) {
+      clearTimeout(this.inactivityTimer);
+      this.inactivityTimer = null;
+    }
+    this.isUserTypingPaused = false;
+
+    try {
+      await this._flushModifiersAndSettle(60, gen);
+    } catch (err) {
+      if (err instanceof AbortTypingSignal) {
+        return false;
+      }
+      throw err;
+    }
+
+    if (this.state !== 'PAUSED' || this.runGeneration !== gen) {
+      return false;
+    }
+
+    this.isManuallyPaused = false;
+    this.state = 'RUNNING';
+    return true;
+  }
+
+  /**
+   * Immediately aborts and resets any active or paused auto-typing operation to IDLE.
    */
   abort() {
-    this.cancelRequested = true;
-    this.isActive = false;
-    this.isSuspended = false;
+    this.runGeneration++;
+    this.state = 'IDLE';
+    this.isManuallyPaused = false;
+    this.isUserTypingPaused = false;
+    this.currentIndex = 0;
+    this.fullText = '';
+    this.pendingTypo = null;
 
     if (this.inactivityTimer) {
       clearTimeout(this.inactivityTimer);
       this.inactivityTimer = null;
     }
-
-    if (this.suspendResolve) {
-      this.suspendResolve();
-      this.suspendResolve = null;
-    }
   }
 
   /**
-   * Toggles auto-typing: if active, aborts and plays 2x low tut. If idle, starts from index 0.
+   * Toggles auto-typing: if active/paused, aborts and plays 2x low tut. If idle, starts from index 0.
    * @param {string} text
    * @returns {Promise<boolean>}
    */
   async toggle(text) {
-    if (this.isActive) {
+    if (this.state !== 'IDLE') {
       this.abort();
       earconSynth.playDoubleLowTut(); // 2x low tut (440 Hz) on cancel
       return false;
@@ -164,33 +261,52 @@ class AutoTyper {
   /**
    * Concurrency Arbitration: Called when user presses any physical keyboard key.
    * Immediately suspends auto-typing and arms a 5-second inactivity timer.
+   * Never overrides or auto-resumes a manual pause.
    */
   onPhysicalKeyPress() {
-    if (!this.isActive || this.isInjecting) {
+    if (this.state === 'IDLE' || this.isInjecting || this.isManuallyPaused) {
       return;
     }
 
-    this.isSuspended = true;
+    this.isUserTypingPaused = true;
+    this.state = 'PAUSED';
 
     if (this.inactivityTimer) {
       clearTimeout(this.inactivityTimer);
     }
 
     this.inactivityTimer = setTimeout(() => {
-      this.isSuspended = false;
       this.inactivityTimer = null;
-      if (this.suspendResolve) {
-        this.suspendResolve();
-        this.suspendResolve = null;
+      this.isUserTypingPaused = false;
+      if (this.state === 'PAUSED' && !this.isManuallyPaused) {
+        this.state = 'RUNNING';
       }
     }, 5000);
   }
 
   /**
-   * Main typing cadence and typo simulation loop.
+   * Granular gatekeeper checked before every character injection, backspace, and sleep slice.
+   * Polls non-blockingly at 20ms while paused and throws AbortTypingSignal if aborted.
+   * @param {number} [gen=this.runGeneration]
    */
-  async _runLoop() {
-    const text = this.currentText;
+  async waitUntilRunnable(gen = this.runGeneration) {
+    while (true) {
+      if (this.state === 'IDLE' || gen !== this.runGeneration) {
+        throw new AbortTypingSignal();
+      }
+      if (!this.isManuallyPaused && !this.isUserTypingPaused && this.state === 'RUNNING') {
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  }
+
+  /**
+   * Main typing cadence and typo simulation loop.
+   * @param {number} gen
+   */
+  async _runLoop(gen) {
+    const text = this.fullText;
     let wpm = Math.floor(Math.random() * 36) + 85; // WPM in [85, 120]
     let wordCount = 0;
     let pauseThreshold = Math.floor(Math.random() * 3) + 3; // K in [3, 5]
@@ -199,16 +315,13 @@ class AutoTyper {
     let wordTypoTargetIndex = -1;
 
     // Small pause to allow start earcon (350ms long tut) to ring clearly
-    await this._sleep(350);
+    await this._sleep(350, gen);
 
-    while (this.currentIndex < text.length && !this.cancelRequested) {
-      // 1. Suspension handler: wait until 5s of user inactivity elapse
-      while (this.isSuspended && !this.cancelRequested) {
-        await new Promise((resolve) => {
-          this.suspendResolve = resolve;
-        });
-      }
-      if (this.cancelRequested) break;
+    // Flush held hotkey modifier keys right before typing and allow 60ms settle
+    await this._flushModifiersAndSettle(60, gen);
+
+    while (this.currentIndex < text.length) {
+      await this.waitUntilRunnable(gen);
 
       const char = text[this.currentIndex];
       const isAlphanumeric = /[a-zA-Z0-9]/.test(char);
@@ -232,58 +345,65 @@ class AutoTyper {
         wordTypoTargetIndex = -1;
       }
 
-      const shouldTypo = !this.isSuspended && isAlphanumeric && (this.currentIndex === wordTypoTargetIndex);
+      const shouldTypo = isAlphanumeric && (this.currentIndex === wordTypoTargetIndex);
 
       if (shouldTypo) {
         wordTypoTargetIndex = -1; // Consume typo for this word
         const wrongChar = this._getAdjacentChar(char);
-        await this._injectChar(wrongChar);
 
         // Forward type next M characters (M in [1, 3])
         const remainingCount = text.length - (this.currentIndex + 1);
         const m = Math.min(remainingCount, Math.floor(Math.random() * 3) + 1);
         const forwardChars = text.slice(this.currentIndex + 1, this.currentIndex + 1 + m);
 
+        // Track active typo sequence so pauses mid-typo resume seamlessly from exact sub-step
+        this.pendingTypo = {
+          baseIndex: this.currentIndex,
+          wrongChar,
+          correctChar: char,
+          forwardChars,
+        };
+
+        await this.waitUntilRunnable(gen);
+        await this._injectChar(wrongChar);
+
         for (let j = 0; j < forwardChars.length; j++) {
-          if (this.cancelRequested || this.isSuspended) break;
           const delay = this._calculateCharDelay(wpm);
-          await this._sleep(delay);
+          await this._sleep(delay, gen);
+          await this.waitUntilRunnable(gen);
           await this._injectChar(forwardChars[j]);
         }
 
         // Reaction pause: Sleep 150ms - 250ms
-        if (!this.cancelRequested && !this.isSuspended) {
-          const reactionPause = Math.floor(Math.random() * 101) + 150;
-          await this._sleep(reactionPause);
-        }
+        const reactionPause = Math.floor(Math.random() * 101) + 150;
+        await this._sleep(reactionPause, gen);
 
         // Send M + 1 virtual Backspaces with fixed 100ms delay between each
         const backspacesToSend = forwardChars.length + 1;
         for (let b = 0; b < backspacesToSend; b++) {
-          if (this.cancelRequested || this.isSuspended) break;
+          await this.waitUntilRunnable(gen);
           await this._injectBackspace();
-          await this._sleep(100);
+          await this._sleep(100, gen);
         }
 
         // Re-type correct character and forward characters
-        if (!this.cancelRequested && !this.isSuspended) {
-          await this._injectChar(char);
-          for (let j = 0; j < forwardChars.length; j++) {
-            if (this.cancelRequested || this.isSuspended) break;
-            const delay = this._calculateCharDelay(wpm);
-            await this._sleep(delay);
-            await this._injectChar(forwardChars[j]);
-          }
+        await this.waitUntilRunnable(gen);
+        await this._injectChar(char);
+        for (let j = 0; j < forwardChars.length; j++) {
+          const delay = this._calculateCharDelay(wpm);
+          await this._sleep(delay, gen);
+          await this.waitUntilRunnable(gen);
+          await this._injectChar(forwardChars[j]);
         }
 
         this.currentIndex += (1 + forwardChars.length);
+        this.pendingTypo = null;
       } else {
         // Normal character injection
+        await this.waitUntilRunnable(gen);
         await this._injectChar(char);
         this.currentIndex++;
       }
-
-      if (this.cancelRequested) break;
 
       // 3. Word boundary check: Natural Hesitation / Pauses
       if (char === ' ' || char === '\n') {
@@ -293,26 +413,30 @@ class AutoTyper {
         if (wordCount >= pauseThreshold) {
           // Thinking pause: sleep T_pause in [3000ms, 10000ms]
           const pauseDuration = Math.floor(Math.random() * 7001) + 3000;
-          await this._sleep(pauseDuration);
+          await this._sleep(pauseDuration, gen);
           wordCount = 0;
-          pauseThreshold = Math.floor(Math.random() * 3) + 6; // Roll new K in [3, 8]
+          pauseThreshold = Math.floor(Math.random() * 3) + 3; // Roll new K in [3, 5]
         }
       }
 
       // 4. Per-character base delay with jitter
       const charDelay = this._calculateCharDelay(wpm);
-      await this._sleep(charDelay);
+      await this._sleep(charDelay, gen);
     }
 
-    const completedNaturally = !this.cancelRequested && this.currentIndex >= text.length;
+    if (gen !== this.runGeneration || this.state === 'IDLE') {
+      return;
+    }
 
-    this.isActive = false;
-    this.isSuspended = false;
+    this.state = 'IDLE';
+    this.isManuallyPaused = false;
+    this.isUserTypingPaused = false;
+    this.currentIndex = 0;
+    this.fullText = '';
+    this.pendingTypo = null;
 
     // Auditory feedback: 2x Rapid Short Tut (880 Hz, 90ms) when typing finishes naturally
-    if (completedNaturally) {
-      earconSynth.playDoubleShortTut();
-    }
+    earconSynth.playDoubleShortTut();
   }
 
   /**
@@ -371,15 +495,20 @@ class AutoTyper {
   }
 
   /**
-   * Responsive sleep helper that wakes up immediately if cancellation is requested.
+   * Responsive sleep helper that respects PAUSED states without advancing sleep time
+   * and aborts immediately when state transitions to IDLE.
    * @param {number} ms
+   * @param {number} [gen=this.runGeneration]
    */
-  async _sleep(ms) {
-    const start = Date.now();
-    while (Date.now() - start < ms) {
-      if (this.cancelRequested) break;
-      const remaining = ms - (Date.now() - start);
-      await new Promise((r) => setTimeout(r, Math.min(remaining, 50)));
+  async _sleep(ms, gen = this.runGeneration) {
+    let elapsedActive = 0;
+    while (elapsedActive < ms) {
+      await this.waitUntilRunnable(gen);
+      const remaining = ms - elapsedActive;
+      const slice = Math.min(remaining, 20);
+      const tickStart = Date.now();
+      await new Promise((r) => setTimeout(r, slice));
+      elapsedActive += Math.max(slice, Date.now() - tickStart);
     }
   }
 }
@@ -389,4 +518,5 @@ const autoTyper = new AutoTyper();
 module.exports = {
   autoTyper,
   AutoTyper,
+  AbortTypingSignal,
 };

@@ -128,16 +128,19 @@ class HookManager {
 
     this.lastRAltDownTime = 0;
     this.lastRAltUpTime = 0;
+    this.lastRAltTapTime = 0;
     this.rAltHoldTimer = null;
     this.rAltHoldTriggered = false;
-    this.rAltSingleTapTimer = null;
-    this.isRAltDoubleTap = false;
+    this.rAltPendingTimer = null;
+    this.rAltPendingMode = null;
+    this.rAltDownHandledDoubleTap = false;
     this.isRAltActiveCombo = false;
 
     this.arrowDownPressTime = 0;
     this.arrowDownHoldTimer = null;
     this.arrowDownHoldTriggered = false;
 
+    this.nativeInputActive = false;
     this.lastTriggerTimes = {};
 
     // Listen to state machine profile changes
@@ -236,12 +239,15 @@ class HookManager {
       // Ignored
     }
 
+    this.nativeInputActive = false;
     try {
       if (mouseSuppressor && typeof mouseSuppressor.startInputListener === 'function') {
-        mouseSuppressor.startInputListener((event) => this.handleNativeInputEvent(event));
+        this.nativeInputActive = Boolean(
+          mouseSuppressor.startInputListener((event) => this.handleNativeInputEvent(event))
+        );
       }
     } catch (_err) {
-      // Ignored
+      this.nativeInputActive = false;
     }
 
     uIOhook.on('mousemove', (e) => this.handleMouseMove(e));
@@ -274,6 +280,7 @@ class HookManager {
     } catch (_err) {
       // Ignored
     }
+    this.nativeInputActive = false;
     this.isListening = false;
   }
 
@@ -287,7 +294,7 @@ class HookManager {
 
     switch (type) {
       case 'cycle-profile':
-        if (stateMachine.getState() === 'IDLE' && this._debounceTrigger('cycle-profile', 200)) {
+        if (stateMachine.getState() === 'IDLE' && this._debounceTrigger('cycle-profile', 250)) {
           stateMachine.cycleOutputProfile();
         }
         break;
@@ -325,32 +332,38 @@ class HookManager {
         break;
 
       case 'clear-staged':
-        if (stateMachine.getState() === 'STAGING' && this._debounceTrigger('clear-staged', 200)) {
-          stagingBuffer.clear();
+        if ((stateMachine.getState() === 'STAGING' || autoTyper.isActive) && this._debounceTrigger('clear-staged', 200)) {
+          this.clearStagingAndAutoTyper();
         }
+        break;
+
+      case 'r-alt-down':
+        this.handleRAltDown();
         break;
 
       case 'r-alt-double-tap':
         if (this._debounceTrigger('r-alt-double-tap', 200)) {
-          audioSession.killActiveAudio();
-          autoTyper.abort();
+          this._handleRAltDoubleTapAction();
         }
         break;
 
       case 'r-alt-tap':
-        if (this._debounceTrigger('r-alt-tap', 200)) {
-          this.handleRAltSingleTap();
-        }
+        this.handleRAltTapRaw();
         break;
 
       case 'r-alt-hold':
-        if (this._debounceTrigger('r-alt-hold', 300)) {
+        if (this.rAltDownHandledDoubleTap) {
+          this.rAltDownHandledDoubleTap = false;
+          break;
+        }
+        this._clearRAltPendingTimer();
+        if (this._debounceTrigger('r-alt-hold', 250)) {
           this.handleRAltHold();
         }
         break;
 
       case 'cycle-reasoning':
-        if (this._debounceTrigger('cycle-reasoning', 200)) {
+        if (this._debounceTrigger('cycle-reasoning', 250)) {
           stateMachine.cycleReasoningLevel();
         }
         break;
@@ -404,18 +417,28 @@ class HookManager {
   handleKeyDown(e) {
     if (!stateMachine.isCompanionArmed()) return;
     const key = e.keycode;
+
+    // AltGr Filtering Safeguard: Windows emits synthetic VK_LCONTROL alongside physical R-ALT (VK_RMENU)
+    const hardwareRAltDown = Boolean(
+      this.keysDown.has(UiohookKey.AltRight) ||
+      (mouseSuppressor && typeof mouseSuppressor.isHardwareRAltDown === 'function' && mouseSuppressor.isHardwareRAltDown())
+    );
+    if (key === UiohookKey.Ctrl && hardwareRAltDown) {
+      return;
+    }
+
     if (this.keysDown.has(key)) return; // Prevent repeated auto-repeat triggers
     this.keysDown.add(key);
 
     const isRCtrl = this.keysDown.has(UiohookKey.CtrlRight);
     const isRShift = this.keysDown.has(UiohookKey.ShiftRight);
     const isRAlt = this.keysDown.has(UiohookKey.AltRight);
-    const isLCtrl = this.keysDown.has(UiohookKey.Ctrl);
+    const isLCtrl = this.keysDown.has(UiohookKey.Ctrl) && !hardwareRAltDown;
     const isLShift = this.keysDown.has(UiohookKey.Shift);
     const isShift = isLShift || isRShift || Boolean(e.shiftKey);
     const hasModifier = isRCtrl || isLCtrl || isRAlt || Boolean(e.ctrlKey) || Boolean(e.altKey) || Boolean(e.metaKey);
 
-    // Concurrency Arbitration: notify Auto-Typer of physical keypress if active
+    // Concurrency Arbitration: notify Auto-Typer of physical keypress if active (excluding R-ALT / R-CTRL combo)
     if (autoTyper.isActive && !autoTyper.isInjecting) {
       if (key !== UiohookKey.CtrlRight && key !== UiohookKey.AltRight) {
         autoTyper.onPhysicalKeyPress();
@@ -452,6 +475,11 @@ class HookManager {
         stagingBuffer.appendChar(ch);
         return;
       }
+    }
+
+    // Native C++ input listener is the single authoritative handler for hotkeys when active
+    if (this.nativeInputActive) {
+      return;
     }
 
     // 0. Cycle Output Profile: R-CTRL + R-SHIFT (Tap)
@@ -498,44 +526,28 @@ class HookManager {
       return;
     }
 
-    // 4. Clear Staged Items: R-CTRL + Delete
+    // 4. Clear Staged Items / Paused Auto-Typer: R-CTRL + Delete
     if (isRCtrl && (key === UiohookKey.Delete || key === UiohookKey.NumpadDelete)) {
-      if (stateMachine.getState() === 'STAGING') {
-        stagingBuffer.clear();
+      if (stateMachine.getState() === 'STAGING' || autoTyper.isActive) {
+        this.clearStagingAndAutoTyper();
       }
       return;
     }
 
-    // 5. Answer Replay, Typing Trigger & Universal Interruption: R-CTRL + R-ALT
+    // 5. Answer Replay, Resumable Auto-Typer & Hard Stop: R-ALT + R-CTRL
     if ((isRCtrl && key === UiohookKey.AltRight) || (isRAlt && key === UiohookKey.CtrlRight)) {
       this.isRAltActiveCombo = true;
-      const now = Date.now();
+      this.rAltHoldTriggered = false;
+      this.handleRAltDown();
 
-      // DOUBLE-TAP (< 300ms between two presses / taps): HARD STOP / SILENCE ALL
-      if ((now - this.lastRAltDownTime < 300) || (now - this.lastRAltUpTime < 300)) {
-        this.isRAltDoubleTap = true;
-        if (this.rAltHoldTimer) {
-          clearTimeout(this.rAltHoldTimer);
-          this.rAltHoldTimer = null;
-        }
-        if (this.rAltSingleTapTimer) {
-          clearTimeout(this.rAltSingleTapTimer);
-          this.rAltSingleTapTimer = null;
-        }
-        audioSession.killActiveAudio();
-        autoTyper.abort();
-        this.lastRAltDownTime = 0;
-        this.lastRAltUpTime = 0;
+      if (this.rAltDownHandledDoubleTap) {
         return;
       }
-
-      this.isRAltDoubleTap = false;
-      this.lastRAltDownTime = now;
-      this.rAltHoldTriggered = false;
 
       if (this.rAltHoldTimer) clearTimeout(this.rAltHoldTimer);
       this.rAltHoldTimer = setTimeout(() => {
         this.rAltHoldTriggered = true;
+        this._clearRAltPendingTimer();
         this.handleRAltHold();
       }, 500);
       return;
@@ -565,6 +577,10 @@ class HookManager {
     }
     const key = e.keycode;
     this.keysDown.delete(key);
+
+    if (this.nativeInputActive) {
+      return;
+    }
 
     // Full Screen Capture on Arrow Up release (if tapped < 400ms without hold)
     if (key === UiohookKey.ArrowUp || key === UiohookKey.NumpadArrowUp) {
@@ -604,30 +620,19 @@ class HookManager {
     if (key === UiohookKey.AltRight || (key === UiohookKey.CtrlRight && this.isRAltActiveCombo)) {
       if (this.isRAltActiveCombo) {
         this.isRAltActiveCombo = false;
-        const now = Date.now();
         if (this.rAltHoldTimer) {
           clearTimeout(this.rAltHoldTimer);
           this.rAltHoldTimer = null;
         }
 
-        if (this.isRAltDoubleTap) {
-          this.isRAltDoubleTap = false;
-          return;
-        }
-
         if (this.rAltHoldTriggered) {
           this.rAltHoldTriggered = false;
+          this.rAltDownHandledDoubleTap = false;
           return;
         }
 
-        // Single Tap (< 500ms release)
-        this.lastRAltUpTime = now;
-        if (this.rAltSingleTapTimer) {
-          clearTimeout(this.rAltSingleTapTimer);
-        }
-        this.rAltSingleTapTimer = setTimeout(() => {
-          this.handleRAltSingleTap();
-        }, 250);
+        // Single Tap (< 500ms release) routed through the state-dependent interaction matrix
+        this.handleRAltTapRaw();
         return;
       }
     }
@@ -652,10 +657,127 @@ class HookManager {
     }
   }
 
+  _clearRAltPendingTimer() {
+    if (this.rAltPendingTimer) {
+      clearTimeout(this.rAltPendingTimer);
+      this.rAltPendingTimer = null;
+    }
+    this.rAltPendingMode = null;
+  }
+
   /**
-   * Handles Single Tap (< 500ms) on R-CTRL + R-ALT.
+   * Aborts active/paused Auto-Typer and clears staged items cleanly (R-CTRL + Delete).
+   */
+  clearStagingAndAutoTyper() {
+    this._clearRAltPendingTimer();
+    this.lastRAltTapTime = 0;
+    const wasAutoTyperActive = autoTyper.isActive;
+    if (wasAutoTyperActive) {
+      autoTyper.abort();
+    }
+
+    const hadStaged = stagingBuffer.hasItems();
+    if (stateMachine.getState() === 'STAGING') {
+      stagingBuffer.clear();
+    } else if (wasAutoTyperActive && !hadStaged) {
+      earconSynth.playDoubleLowTut();
+    }
+  }
+
+  /**
+   * Executes the double-tap action according to current Auto-Typer state:
+   * - RUNNING / PAUSED: Hard Abort auto-typer and play 2x Low Tut.
+   * - IDLE: Hard Stop all TTS / earcon audio playback without replaying or copying.
+   */
+  _handleRAltDoubleTapAction() {
+    this._clearRAltPendingTimer();
+    this.lastRAltTapTime = 0;
+
+    if (autoTyper.getState() !== 'IDLE') {
+      autoTyper.abort();
+      earconSynth.playDoubleLowTut(); // 2x Low Tut (440 Hz, 110ms)
+    } else {
+      audioSession.killActiveAudio();
+    }
+  }
+
+  /**
+   * Handles initial press (rising edge) of R-ALT + R-CTRL to catch double-taps immediately (< 300ms).
+   */
+  handleRAltDown() {
+    const now = Date.now();
+    if (this.lastRAltTapTime > 0 && (now - this.lastRAltTapTime) < 300) {
+      this.rAltDownHandledDoubleTap = true;
+      this._handleRAltDoubleTapAction();
+      return;
+    }
+    this.rAltDownHandledDoubleTap = false;
+  }
+
+  /**
+   * Handles release of a < 500ms R-ALT + R-CTRL tap through Cases A (RUNNING), B (PAUSED), and C (IDLE).
+   */
+  handleRAltTapRaw() {
+    if (this.rAltDownHandledDoubleTap) {
+      this.rAltDownHandledDoubleTap = false;
+      return;
+    }
+
+    const now = Date.now();
+    if (this.lastRAltTapTime > 0 && (now - this.lastRAltTapTime) < 300) {
+      this._handleRAltDoubleTapAction();
+      return;
+    }
+
+    const typerState = autoTyper.getState();
+
+    // Case A: Auto-Typer is currently RUNNING -> Immediate 0ms pause + open 300ms double-tap escalation window
+    if (typerState === 'RUNNING') {
+      this._clearRAltPendingTimer();
+      autoTyper.pause();
+      earconSynth.playShortTut();
+      this.lastRAltTapTime = now;
+      return;
+    }
+
+    // Case B: Auto-Typer is currently PAUSED -> Arm 300ms confirmation timer to resume (or double-tap to abort)
+    if (typerState === 'PAUSED') {
+      this._clearRAltPendingTimer();
+      this.lastRAltTapTime = now;
+      this.rAltPendingMode = 'resume';
+      this.rAltPendingTimer = setTimeout(() => {
+        this.rAltPendingTimer = null;
+        this.rAltPendingMode = null;
+        this.lastRAltTapTime = 0;
+        if (!stateMachine.isCompanionArmed() || autoTyper.getState() !== 'PAUSED') {
+          return;
+        }
+        earconSynth.playShortTut();
+        autoTyper.resume();
+      }, 300);
+      return;
+    }
+
+    // Case C: Auto-Typer is IDLE -> Arm 300ms double-tap window before single-tap replay/copy
+    this._clearRAltPendingTimer();
+    this.lastRAltTapTime = now;
+    this.rAltPendingMode = 'idle-tap';
+    this.rAltPendingTimer = setTimeout(() => {
+      this.rAltPendingTimer = null;
+      this.rAltPendingMode = null;
+      this.lastRAltTapTime = 0;
+      if (!stateMachine.isCompanionArmed() || autoTyper.getState() !== 'IDLE') {
+        return;
+      }
+      this.handleRAltSingleTap();
+    }, 300);
+  }
+
+  /**
+   * Handles confirmed Single Tap (< 500ms) on R-ALT + R-CTRL while Auto-Typer is IDLE (Case C).
    */
   handleRAltSingleTap() {
+    if (autoTyper.getState() !== 'IDLE') return;
     audioSession.killActiveAudio();
     const profile = stateMachine.getOutputProfile();
 
@@ -678,7 +800,7 @@ class HookManager {
       if (content) {
         try {
           if (clipboard && typeof clipboard.writeText === 'function') {
-            clipboard.writeText(content);
+            Promise.resolve(clipboard.writeText(content)).catch(() => {});
           }
         } catch (_err) {
           // Ignored
@@ -691,9 +813,13 @@ class HookManager {
   }
 
   /**
-   * Handles Hold (>= 500ms) on R-CTRL + R-ALT.
+   * Handles Hold (>= 500ms) on R-ALT + R-CTRL while Auto-Typer is IDLE (Case C).
    */
-  handleRAltHold() {
+  async handleRAltHold() {
+    if (autoTyper.getState() !== 'IDLE') {
+      return;
+    }
+
     audioSession.killActiveAudio();
     const profile = stateMachine.getOutputProfile();
 
@@ -713,16 +839,25 @@ class HookManager {
         earconSynth.playDoubleLowTut();
       }
     } else if (profile === 'ESSAY' || profile === 'PROGRAMMING' || profile === 'MATHEMATICS') {
-      const content = companionCache.getTextContent(profile);
-      if (autoTyper.isActive) {
-        autoTyper.abort();
-        earconSynth.playDoubleLowTut(); // 2x low tut (440 Hz) on cancel
-      } else {
-        if (content) {
-          autoTyper.start(content);
-        } else {
-          earconSynth.playDoubleLowTut();
+      const cached = companionCache.getTextContent(profile);
+      let clipboardFallback = '';
+      if (!cached) {
+        try {
+          if (clipboard && typeof clipboard.readText === 'function') {
+            const rawClipboard = await Promise.resolve(clipboard.readText());
+            if (typeof rawClipboard === 'string') {
+              clipboardFallback = rawClipboard;
+            }
+          }
+        } catch (_err) {
+          clipboardFallback = '';
         }
+      }
+      const content = cached || (clipboardFallback && clipboardFallback.trim() ? clipboardFallback : '');
+      if (content) {
+        autoTyper.start(content);
+      } else {
+        earconSynth.playDoubleLowTut();
       }
     }
   }
@@ -731,6 +866,10 @@ class HookManager {
     if (!stateMachine.isCompanionArmed()) return;
     const button = e.button;
     this.mouseButtonsDown.add(button);
+
+    if (this.nativeInputActive) {
+      return;
+    }
 
     // Push-to-Talk: Mouse Left (1) + Mouse Right (2) Hold >= 1000ms
     if (this.mouseButtonsDown.has(1) && this.mouseButtonsDown.has(2)) {
@@ -755,6 +894,10 @@ class HookManager {
     }
     const button = e.button;
     this.mouseButtonsDown.delete(button);
+
+    if (this.nativeInputActive) {
+      return;
+    }
 
     // Cancel voice hold timer if buttons released before 1000ms
     if (this.voiceHoldTimer) {
@@ -786,10 +929,7 @@ class HookManager {
       clearTimeout(this.rAltHoldTimer);
       this.rAltHoldTimer = null;
     }
-    if (this.rAltSingleTapTimer) {
-      clearTimeout(this.rAltSingleTapTimer);
-      this.rAltSingleTapTimer = null;
-    }
+    this._clearRAltPendingTimer();
     if (this.arrowDownHoldTimer) {
       clearTimeout(this.arrowDownHoldTimer);
       this.arrowDownHoldTimer = null;
@@ -807,10 +947,11 @@ class HookManager {
     this.arrowUpHoldTriggered = false;
     this.rAltHoldTriggered = false;
     this.arrowDownHoldTriggered = false;
-    this.isRAltDoubleTap = false;
+    this.rAltDownHandledDoubleTap = false;
     this.isRAltActiveCombo = false;
     this.lastRAltDownTime = 0;
     this.lastRAltUpTime = 0;
+    this.lastRAltTapTime = 0;
 
     autoTyper.abort();
     audioSession.killActiveAudio();

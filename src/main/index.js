@@ -27,6 +27,15 @@ const { initDatabase, closeDb } = require('./database/sqlite-client');
 const { hookManager } = require('./companion/hook-manager');
 const { registerIpcHandlers } = require('./ipc-handlers');
 const { ttsEngine } = require('./audio/tts-engine');
+const { earconSynth } = require('./audio/earcon-synth');
+
+function restoreSystemCursorFailsafe() {
+  try {
+    earconSynth.cancelActiveEarcon();
+  } catch (_err) {
+    // Ignored
+  }
+}
 
 let mainWindow = null;
 let isQuitting = false;
@@ -140,8 +149,22 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   isQuitting = true;
   app.isQuitting = true;
+  restoreSystemCursorFailsafe();
   hookManager.stop();
   closeDb();
+});
+
+app.on('will-quit', () => {
+  restoreSystemCursorFailsafe();
+});
+
+process.on('exit', () => {
+  restoreSystemCursorFailsafe();
+});
+
+process.on('uncaughtException', (err) => {
+  restoreSystemCursorFailsafe();
+  console.error('Uncaught exception in main process:', err);
 });
 
 app.on('window-all-closed', () => {
