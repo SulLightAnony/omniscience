@@ -138,6 +138,8 @@ class HookManager {
     this.arrowDownHoldTimer = null;
     this.arrowDownHoldTriggered = false;
 
+    this.lastTriggerTimes = {};
+
     // Listen to state machine profile changes
     stateMachine.on('profile-changed', (profile) => {
       if (this.outputProfileChangeDispatcher) {
@@ -207,7 +209,21 @@ class HookManager {
   }
 
   /**
-   * Starts global uiohook listener and native hooks.
+   * Evaluates action debounce to avoid duplicate firing between native listener and uIOhook.
+   * @param {string} name
+   * @param {number} [cooldown=150]
+   * @returns {boolean}
+   */
+  _debounceTrigger(name, cooldown = 150) {
+    const now = Date.now();
+    const last = this.lastTriggerTimes[name] || 0;
+    if (now - last < cooldown) return false;
+    this.lastTriggerTimes[name] = now;
+    return true;
+  }
+
+  /**
+   * Starts global native C++ input listener and uiohook.
    */
   start() {
     if (this.isListening) return;
@@ -215,6 +231,14 @@ class HookManager {
     try {
       if (mouseSuppressor && typeof mouseSuppressor.installHook === 'function') {
         mouseSuppressor.installHook();
+      }
+    } catch (_err) {
+      // Ignored
+    }
+
+    try {
+      if (mouseSuppressor && typeof mouseSuppressor.startInputListener === 'function') {
+        mouseSuppressor.startInputListener((event) => this.handleNativeInputEvent(event));
       }
     } catch (_err) {
       // Ignored
@@ -235,7 +259,7 @@ class HookManager {
   }
 
   /**
-   * Stops global uiohook listener and releases native hooks.
+   * Stops global native C++ input listener and uiohook.
    */
   stop() {
     if (!this.isListening) return;
@@ -244,10 +268,111 @@ class HookManager {
       if (mouseSuppressor && typeof mouseSuppressor.uninstallHook === 'function') {
         mouseSuppressor.uninstallHook();
       }
+      if (mouseSuppressor && typeof mouseSuppressor.stopInputListener === 'function') {
+        mouseSuppressor.stopInputListener();
+      }
     } catch (_err) {
       // Ignored
     }
     this.isListening = false;
+  }
+
+  /**
+   * Dispatches validated hotkey triggers emitted by native C++ GetAsyncKeyState worker thread.
+   * @param {{ type: string, x: number, y: number }} e
+   */
+  handleNativeInputEvent(e) {
+    if (!stateMachine.isCompanionArmed()) return;
+    const type = e.type;
+
+    switch (type) {
+      case 'cycle-profile':
+        if (stateMachine.getState() === 'IDLE' && this._debounceTrigger('cycle-profile', 200)) {
+          stateMachine.cycleOutputProfile();
+        }
+        break;
+
+      case 'screen-capture-fullscreen':
+        if (stateMachine.getState() !== 'BUSY' && this._debounceTrigger('screen-capture-fullscreen', 300)) {
+          screenCapture.captureFullScreen();
+        }
+        break;
+
+      case 'cycle-model':
+        if (this._debounceTrigger('cycle-model', 300)) {
+          this.cycleActiveModel();
+        }
+        break;
+
+      case 'region-start':
+        if (stateMachine.getState() !== 'BUSY') {
+          const coords = (e.x || e.y) ? { x: e.x, y: e.y } : this.currentMouse;
+          screenCapture.startRegionSelection(coords);
+        }
+        break;
+
+      case 'region-finish':
+        if (screenCapture.isRegionSelecting) {
+          const coords = (e.x || e.y) ? { x: e.x, y: e.y } : this.currentMouse;
+          screenCapture.finishRegionSelection(coords);
+        }
+        break;
+
+      case 'send-staged':
+        if (stagingBuffer.hasItems() && stateMachine.getState() !== 'BUSY' && this._debounceTrigger('send-staged', 300)) {
+          this.dispatchStagedItems();
+        }
+        break;
+
+      case 'clear-staged':
+        if (stateMachine.getState() === 'STAGING' && this._debounceTrigger('clear-staged', 200)) {
+          stagingBuffer.clear();
+        }
+        break;
+
+      case 'r-alt-double-tap':
+        if (this._debounceTrigger('r-alt-double-tap', 200)) {
+          audioSession.killActiveAudio();
+          autoTyper.abort();
+        }
+        break;
+
+      case 'r-alt-tap':
+        if (this._debounceTrigger('r-alt-tap', 200)) {
+          this.handleRAltSingleTap();
+        }
+        break;
+
+      case 'r-alt-hold':
+        if (this._debounceTrigger('r-alt-hold', 300)) {
+          this.handleRAltHold();
+        }
+        break;
+
+      case 'cycle-reasoning':
+        if (this._debounceTrigger('cycle-reasoning', 200)) {
+          stateMachine.cycleReasoningLevel();
+        }
+        break;
+
+      case 'toggle-submode':
+        if (this._debounceTrigger('toggle-submode', 400)) {
+          stateMachine.toggleSubMode();
+        }
+        break;
+
+      case 'voice-start':
+        if (stateMachine.getState() !== 'BUSY') {
+          this.startVoiceCapture();
+        }
+        break;
+
+      case 'voice-stop':
+        if (this.isVoiceRecording) {
+          this.stopVoiceCapture();
+        }
+        break;
+    }
   }
 
   /**

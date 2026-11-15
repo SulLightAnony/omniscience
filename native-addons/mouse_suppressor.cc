@@ -8,6 +8,11 @@
 #include <thread>
 #include <mutex>
 #include <string>
+#include <chrono>
+
+#ifndef WDA_EXCLUDEFROMCAPTURE
+#define WDA_EXCLUDEFROMCAPTURE 0x00000011
+#endif
 
 namespace {
 
@@ -20,6 +25,39 @@ HHOOK g_hook = nullptr;
 DWORD g_hook_thread_id = 0;
 std::thread g_hook_thread;
 std::mutex g_init_mutex;
+
+// Input Listener Thread & ThreadSafeFunction
+std::atomic<bool> g_input_thread_running(false);
+std::thread g_input_thread;
+Napi::ThreadSafeFunction g_tsfn = nullptr;
+std::mutex g_tsfn_mutex;
+
+struct InputEventData {
+    std::string type;
+    int x;
+    int y;
+};
+
+void DispatchNativeEvent(const std::string& type, int x = 0, int y = 0) {
+    std::lock_guard<std::mutex> lock(g_tsfn_mutex);
+    if (!g_tsfn) return;
+
+    InputEventData* data = new InputEventData{ type, x, y };
+    napi_status status = g_tsfn.NonBlockingCall(data, [](Napi::Env env, Napi::Function jsCallback, InputEventData* data) {
+        if (env != nullptr && jsCallback != nullptr && data != nullptr) {
+            Napi::Object obj = Napi::Object::New(env);
+            obj.Set("type", Napi::String::New(env, data->type));
+            obj.Set("x", Napi::Number::New(env, data->x));
+            obj.Set("y", Napi::Number::New(env, data->y));
+            jsCallback.Call({ obj });
+        }
+        delete data;
+    });
+
+    if (status != napi_ok) {
+        delete data;
+    }
+}
 
 LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode >= 0) {
@@ -68,7 +106,6 @@ bool StartHook() {
     g_thread_running.store(true);
     g_hook_thread = std::thread(HookThreadFunction);
 
-    // Wait up to 500ms for the hook thread to initialize
     int waited_ms = 0;
     while (!g_hook_installed.load() && waited_ms < 500) {
         Sleep(10);
@@ -95,6 +132,251 @@ void StopHook() {
 
     g_hook_thread_id = 0;
     g_hook_installed.store(false);
+}
+
+// -----------------------------------------------------------------------------
+// ASYNCHRONOUS KEYSTATE MONITORING WORKER THREAD (GetAsyncKeyState)
+// -----------------------------------------------------------------------------
+void InputMonitoringThreadFunction() {
+    using clock = std::chrono::steady_clock;
+
+    // Tracking states
+    bool rctrl_rshift_latched = false;
+    bool rctrl_right_latched = false;
+    bool rctrl_delete_latched = false;
+
+    // Arrow Up tracking
+    bool arrow_up_was_down = false;
+    bool arrow_up_hold_triggered = false;
+    clock::time_point arrow_up_down_time;
+
+    // Arrow Down tracking
+    bool arrow_down_was_down = false;
+    bool arrow_down_hold_triggered = false;
+    clock::time_point arrow_down_down_time;
+
+    // Region selection tracking (L-CTRL + L-SHIFT)
+    bool region_combo_was_down = false;
+    bool region_hold_triggered = false;
+    clock::time_point region_down_time;
+
+    // R-CTRL + R-ALT tracking
+    bool ralt_combo_was_down = false;
+    bool ralt_hold_triggered = false;
+    bool ralt_double_tap_detected = false;
+    clock::time_point ralt_down_time;
+    clock::time_point last_ralt_down_time = clock::time_point::min();
+    clock::time_point last_ralt_up_time = clock::time_point::min();
+    bool ralt_tap_pending = false;
+    clock::time_point ralt_tap_schedule_time;
+
+    // Push-to-Talk voice tracking (Mouse Left + Mouse Right)
+    bool voice_combo_was_down = false;
+    bool voice_recording_active = false;
+    clock::time_point voice_down_time;
+
+    while (g_input_thread_running.load()) {
+        auto now = clock::now();
+
+        // 1. Query physical keystates directly from OS subsystem
+        bool isRCtrl = (GetAsyncKeyState(VK_RCONTROL) & 0x8000) != 0;
+        bool isLCtrl = (GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0;
+        bool isRShift = (GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0;
+        bool isLShift = (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0;
+        bool isRAlt = (GetAsyncKeyState(VK_RMENU) & 0x8000) != 0;
+
+        bool isKeyUp = (GetAsyncKeyState(VK_UP) & 0x8000) != 0;
+        bool isKeyDown = (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;
+        bool isKeyRight = (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
+        bool isKeyDelete = (GetAsyncKeyState(VK_DELETE) & 0x8000) != 0;
+
+        bool isLButton = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        bool isRButton = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+
+        // Skip synthetic inputs during auto-typer injection
+        if (!g_is_synthesizing_input.load()) {
+
+            // --- HOTKEY 0: Cycle Output Profile: R-CTRL + R-SHIFT (Tap) ---
+            if (isRCtrl && isRShift) {
+                if (!rctrl_rshift_latched) {
+                    rctrl_rshift_latched = true;
+                    DispatchNativeEvent("cycle-profile");
+                }
+            } else {
+                rctrl_rshift_latched = false;
+            }
+
+            // --- HOTKEY 1: Fullscreen Capture / Model Cycle: R-CTRL + Arrow Up ---
+            if (isRCtrl && isKeyUp) {
+                if (!arrow_up_was_down) {
+                    arrow_up_was_down = true;
+                    arrow_up_hold_triggered = false;
+                    arrow_up_down_time = now;
+                } else if (!arrow_up_hold_triggered) {
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - arrow_up_down_time).count();
+                    if (elapsed >= 400) {
+                        arrow_up_hold_triggered = true;
+                        DispatchNativeEvent("cycle-model");
+                    }
+                }
+            } else if (arrow_up_was_down) {
+                // Key released
+                arrow_up_was_down = false;
+                if (!arrow_up_hold_triggered) {
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - arrow_up_down_time).count();
+                    if (elapsed < 400) {
+                        DispatchNativeEvent("screen-capture-fullscreen");
+                    }
+                }
+                arrow_up_hold_triggered = false;
+            }
+
+            // --- HOTKEY 2: Dynamic Region Capture: L-CTRL + L-SHIFT (strictly without R-CTRL) ---
+            if (isLCtrl && isLShift && !isRCtrl) {
+                if (!region_combo_was_down) {
+                    region_combo_was_down = true;
+                    region_hold_triggered = false;
+                    region_down_time = now;
+                } else if (!region_hold_triggered) {
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - region_down_time).count();
+                    if (elapsed >= 1000) {
+                        region_hold_triggered = true;
+                        POINT pt;
+                        GetCursorPos(&pt);
+                        DispatchNativeEvent("region-start", pt.x, pt.y);
+                    }
+                }
+            } else if (region_combo_was_down) {
+                region_combo_was_down = false;
+                if (region_hold_triggered) {
+                    region_hold_triggered = false;
+                    POINT pt;
+                    GetCursorPos(&pt);
+                    DispatchNativeEvent("region-finish", pt.x, pt.y);
+                }
+            }
+
+            // --- HOTKEY 3: Send Staged Items: R-CTRL + Arrow Right ---
+            if (isRCtrl && isKeyRight) {
+                if (!rctrl_right_latched) {
+                    rctrl_right_latched = true;
+                    DispatchNativeEvent("send-staged");
+                }
+            } else {
+                rctrl_right_latched = false;
+            }
+
+            // --- HOTKEY 4: Clear Staged Items: R-CTRL + Delete ---
+            if (isRCtrl && isKeyDelete) {
+                if (!rctrl_delete_latched) {
+                    rctrl_delete_latched = true;
+                    DispatchNativeEvent("clear-staged");
+                }
+            } else {
+                rctrl_delete_latched = false;
+            }
+
+            // --- HOTKEY 5: Answer Replay, Auto-Typer & Hard Stop: R-CTRL + R-ALT ---
+            bool isRAltCombo = (isRCtrl && isRAlt);
+            if (isRAltCombo) {
+                if (!ralt_combo_was_down) {
+                    ralt_combo_was_down = true;
+
+                    // Double-tap detection (< 300ms from last press or release)
+                    auto msSinceLastDown = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_ralt_down_time).count();
+                    auto msSinceLastUp = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_ralt_up_time).count();
+
+                    if (msSinceLastDown < 300 || msSinceLastUp < 300) {
+                        ralt_double_tap_detected = true;
+                        ralt_tap_pending = false; // Cancel pending single tap
+                        DispatchNativeEvent("r-alt-double-tap");
+                    } else {
+                        ralt_double_tap_detected = false;
+                        ralt_hold_triggered = false;
+                        ralt_down_time = now;
+                    }
+                    last_ralt_down_time = now;
+                } else if (!ralt_double_tap_detected && !ralt_hold_triggered) {
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - ralt_down_time).count();
+                    if (elapsed >= 500) {
+                        ralt_hold_triggered = true;
+                        ralt_tap_pending = false;
+                        DispatchNativeEvent("r-alt-hold");
+                    }
+                }
+            } else if (ralt_combo_was_down) {
+                ralt_combo_was_down = false;
+                last_ralt_up_time = now;
+
+                if (!ralt_double_tap_detected && !ralt_hold_triggered) {
+                    // Arm 220ms pending single-tap to allow double-tap window
+                    ralt_tap_pending = true;
+                    ralt_tap_schedule_time = now;
+                }
+                ralt_double_tap_detected = false;
+                ralt_hold_triggered = false;
+            }
+
+            // Execute pending single-tap after debounce window
+            if (ralt_tap_pending) {
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - ralt_tap_schedule_time).count();
+                if (elapsed >= 220) {
+                    ralt_tap_pending = false;
+                    DispatchNativeEvent("r-alt-tap");
+                }
+            }
+
+            // --- HOTKEY 6: Reasoning / Mode Toggle: R-CTRL + Arrow Down ---
+            if (isRCtrl && isKeyDown) {
+                if (!arrow_down_was_down) {
+                    arrow_down_was_down = true;
+                    arrow_down_hold_triggered = false;
+                    arrow_down_down_time = now;
+                } else if (!arrow_down_hold_triggered) {
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - arrow_down_down_time).count();
+                    if (elapsed >= 1000) {
+                        arrow_down_hold_triggered = true;
+                        DispatchNativeEvent("toggle-submode");
+                    }
+                }
+            } else if (arrow_down_was_down) {
+                arrow_down_was_down = false;
+                if (!arrow_down_hold_triggered) {
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - arrow_down_down_time).count();
+                    if (elapsed < 400) {
+                        DispatchNativeEvent("cycle-reasoning");
+                    }
+                }
+                arrow_down_hold_triggered = false;
+            }
+
+            // --- HOTKEY 7: Push-to-Talk Voice: Mouse Left + Mouse Right (Hold >= 1000ms) ---
+            if (isLButton && isRButton) {
+                if (!voice_combo_was_down) {
+                    voice_combo_was_down = true;
+                    voice_recording_active = false;
+                    voice_down_time = now;
+                } else if (!voice_recording_active) {
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - voice_down_time).count();
+                    if (elapsed >= 1000) {
+                        voice_recording_active = true;
+                        DispatchNativeEvent("voice-start");
+                    }
+                }
+            } else if (voice_combo_was_down) {
+                voice_combo_was_down = false;
+                if (voice_recording_active) {
+                    voice_recording_active = false;
+                    // Suppress right-click context menu automatically
+                    g_suppress_next_rbuttonup.store(true);
+                    DispatchNativeEvent("voice-stop");
+                }
+            }
+        }
+
+        // 12ms sleep interval for 80 Hz polling cadence
+        std::this_thread::sleep_for(std::chrono::milliseconds(12));
+    }
 }
 
 bool CheckForegroundWindowValid() {
@@ -151,6 +433,92 @@ void DoSendUnicodeChar(wchar_t wch) {
 
 } // namespace
 #endif
+
+// -----------------------------------------------------------------------------
+// NODE-API EXPORTS
+// -----------------------------------------------------------------------------
+
+Napi::Value StartInputListener(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+#ifdef _WIN32
+    if (info.Length() < 1 || !info[0].IsFunction()) {
+        Napi::TypeError::New(env, "Expected callback function").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    std::lock_guard<std::mutex> lock(g_tsfn_mutex);
+    if (g_input_thread_running.load()) {
+        return Napi::Boolean::New(env, true);
+    }
+
+    Napi::Function callback = info[0].As<Napi::Function>();
+    g_tsfn = Napi::ThreadSafeFunction::New(
+        env,
+        callback,
+        "OmniscienceNativeInputListener",
+        0,
+        1
+    );
+
+    g_input_thread_running.store(true);
+    g_input_thread = std::thread(InputMonitoringThreadFunction);
+
+    return Napi::Boolean::New(env, true);
+#else
+    return Napi::Boolean::New(env, false);
+#endif
+}
+
+Napi::Value StopInputListener(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+#ifdef _WIN32
+    if (!g_input_thread_running.load()) {
+        return Napi::Boolean::New(env, true);
+    }
+
+    g_input_thread_running.store(false);
+    if (g_input_thread.joinable()) {
+        g_input_thread.join();
+    }
+
+    std::lock_guard<std::mutex> lock(g_tsfn_mutex);
+    if (g_tsfn) {
+        g_tsfn.Release();
+        g_tsfn = nullptr;
+    }
+
+    return Napi::Boolean::New(env, true);
+#else
+    return Napi::Boolean::New(env, false);
+#endif
+}
+
+Napi::Value SetWindowExcludeFromCapture(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+#ifdef _WIN32
+    if (info.Length() < 1 || !info[0].IsBuffer()) {
+        return Napi::Boolean::New(env, false);
+    }
+    Napi::Buffer<char> buf = info[0].As<Napi::Buffer<char>>();
+    if (buf.Length() < sizeof(HWND)) {
+        return Napi::Boolean::New(env, false);
+    }
+
+    HWND hwnd = *reinterpret_cast<HWND*>(buf.Data());
+    if (!hwnd || !IsWindow(hwnd)) {
+        return Napi::Boolean::New(env, false);
+    }
+
+    BOOL ok = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
+    if (!ok) {
+        // Fallback for older Windows 10 builds
+        ok = SetWindowDisplayAffinity(hwnd, 0x00000001);
+    }
+    return Napi::Boolean::New(env, ok != FALSE);
+#else
+    return Napi::Boolean::New(env, false);
+#endif
+}
 
 Napi::Value EnableSuppression(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -263,13 +631,22 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set(Napi::String::New(env, "sendUnicodeString"), Napi::Function::New(env, SendUnicodeString));
     exports.Set(Napi::String::New(env, "sendBackspace"), Napi::Function::New(env, SendBackspace));
     exports.Set(Napi::String::New(env, "isSynthesizingInput"), Napi::Function::New(env, IsSynthesizingInput));
+    exports.Set(Napi::String::New(env, "startInputListener"), Napi::Function::New(env, StartInputListener));
+    exports.Set(Napi::String::New(env, "stopInputListener"), Napi::Function::New(env, StopInputListener));
+    exports.Set(Napi::String::New(env, "setWindowExcludeFromCapture"), Napi::Function::New(env, SetWindowExcludeFromCapture));
 
 #ifdef _WIN32
-    // Auto-install hook on module load
+    // Auto-install suppression hook on module load
     StartHook();
 
-    // Register cleanup hook so background thread joins cleanly on process exit
+    // Register cleanup hook so background threads join cleanly on process exit
     napi_add_env_cleanup_hook(env, [](void*) {
+        if (g_input_thread_running.load()) {
+            g_input_thread_running.store(false);
+            if (g_input_thread.joinable()) {
+                g_input_thread.join();
+            }
+        }
         StopHook();
     }, nullptr);
 #endif

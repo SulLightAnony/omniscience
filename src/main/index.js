@@ -25,9 +25,7 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 const { initDatabase, closeDb } = require('./database/sqlite-client');
 const { hookManager } = require('./companion/hook-manager');
-const { stateMachine } = require('./companion/state-machine');
 const { registerIpcHandlers } = require('./ipc-handlers');
-const { setupTray, destroyTray } = require('./tray-manager');
 const { ttsEngine } = require('./audio/tts-engine');
 
 let mainWindow = null;
@@ -41,13 +39,12 @@ if (!gotSingleInstanceLock) {
   process.exit(0);
 }
 
+// 2. Single Instance Handoff: restore and focus existing background workspace
 app.on('second-instance', () => {
-  // If user launches Omniscience.exe while it is already running (e.g. in Companion Mode),
-  // immediately restore, unhide, and focus the main window.
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
+  if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setSkipTaskbar(false);
     mainWindow.show();
+    mainWindow.restore();
     mainWindow.focus();
   }
 });
@@ -75,11 +72,35 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+
+    // SECTION 3: Apply standard Win32 SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
+    try {
+      const hwndBuf = mainWindow.getNativeWindowHandle();
+      let mouseSuppressor = null;
+      try {
+        mouseSuppressor = require(path.join(__dirname, '../../native-addons/build/Release/mouse_suppressor.node'));
+      } catch (_e1) {
+        try {
+          mouseSuppressor = require(path.join(__dirname, '../../native-addons/build/Debug/mouse_suppressor.node'));
+        } catch (_e2) {}
+      }
+
+      if (mouseSuppressor && typeof mouseSuppressor.setWindowExcludeFromCapture === 'function') {
+        mouseSuppressor.setWindowExcludeFromCapture(hwndBuf);
+      }
+    } catch (affinityErr) {
+      console.error('Failed to set window display affinity via native addon:', affinityErr);
+    }
+
+    // Also apply Electron content protection (wraps SetWindowDisplayAffinity on Windows)
+    try {
+      mainWindow.setContentProtection(true);
+    } catch (_e) {}
   });
 
-  // Intercept close event: hide window and remove from taskbar if Companion Mode is armed
+  // SECTION 1: Intercept close event: hide window and remove from taskbar, keeping background daemon alive
   mainWindow.on('close', (event) => {
-    if (!isQuitting && !app.isQuitting && stateMachine.isCompanionArmed()) {
+    if (!isQuitting && !app.isQuitting) {
       event.preventDefault();
       mainWindow.setSkipTaskbar(true);
       mainWindow.hide();
@@ -104,18 +125,7 @@ app.whenReady().then(async () => {
   // Register IPC communication bridge
   registerIpcHandlers(win, hookManager);
 
-  // Initialize Windows System Tray defensively
-  try {
-    setupTray(win, () => {
-      isQuitting = true;
-      app.isQuitting = true;
-      app.quit();
-    });
-  } catch (trayErr) {
-    console.error('Failed to initialize system tray:', trayErr);
-  }
-
-  // Start global input hooks
+  // Start global input hooks (asynchronous native C++ listener + uiohook)
   try {
     hookManager.start();
   } catch (hookErr) {
@@ -131,15 +141,12 @@ app.on('before-quit', () => {
   isQuitting = true;
   app.isQuitting = true;
   hookManager.stop();
-  destroyTray();
   closeDb();
 });
 
 app.on('window-all-closed', () => {
-  // If companion mode is armed, the process stays alive even if window is closed
-  if (!stateMachine.isCompanionArmed()) {
-    isQuitting = true;
-    app.isQuitting = true;
+  // Maintain background Node.js event loop active for global hotkey processing unless quitting
+  if (isQuitting || app.isQuitting) {
     app.quit();
   }
 });
@@ -147,8 +154,10 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
-  } else if (mainWindow) {
+  } else if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setSkipTaskbar(false);
     mainWindow.show();
+    mainWindow.restore();
+    mainWindow.focus();
   }
 });

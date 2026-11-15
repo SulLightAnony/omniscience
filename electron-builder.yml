@@ -10,6 +10,7 @@ win:
       arch:
         - x64
   icon: build/icon.ico
+  requestedExecutionLevel: requireAdministrator
 
 nsis:
   oneClick: true
